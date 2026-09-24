@@ -38,16 +38,16 @@ st.subheader("1. Nội dung thay thế")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 22 tháng 2 2026")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:52:23 GMT+07:00")
 
-st.subheader("2. Thông số vị trí (Đã chỉnh chuẩn cho ảnh dọc)")
+st.subheader("2. Thông số vị trí (Đã chỉnh chuẩn cho ảnh 1080x1920)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái:", value=60)
-    crop_y = st.number_input("Tọa độ Y góc trên:", value=1770)
+    crop_x = st.number_input("Tọa độ X góc trái:", value=55)
+    crop_y = st.number_input("Tọa độ Y góc trên:", value=1725)
     font_size = st.number_input("Kích thước phông chữ:", value=22)
     line_spacing = st.number_input("Khoảng cách 2 dòng:", value=28)
 with col2:
     crop_w = st.number_input("Chiều rộng vùng xóa:", value=360)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=70)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=65)
 
 if uploaded_files:
     # Hiển thị khung xem trước vị trí xóa trên ảnh đầu tiên
@@ -66,7 +66,7 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"Vùng màu đỏ sẽ bị xóa và đè chữ mới (Kích thước ảnh: {p_w}x{p_h})", 
+            caption=f"Khung đỏ xem trước (Kích thước ảnh: {p_w}x{p_h})", 
             use_container_width=True
         )
 
@@ -106,8 +106,8 @@ if uploaded_files and st.button("🚀 Bắt đầu Xử lý ảnh"):
             if font is None:
                 font = ImageFont.load_default()
 
-            y_line1 = actual_y + 4
-            y_line2 = actual_y + 4 + int(line_spacing)
+            y_line1 = actual_y + 2
+            y_line2 = actual_y + 2 + int(line_spacing)
 
             if line1:
                 draw.text((actual_x + 1, y_line1 + 1), line1, fill=(30, 30, 30), font=font)
