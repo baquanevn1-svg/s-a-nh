@@ -4,19 +4,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import io
 import zipfile
-import urllib.request
-import os
 
 st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát")
-
-# Tự động tải phông chữ chuẩn hỗ trợ đổi kích thước nếu chưa có
-FONT_PATH = "Roboto-Regular.ttf"
-if not os.path.exists(FONT_PATH):
-    try:
-        url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
-        urllib.request.urlretrieve(url, FONT_PATH)
-    except Exception as e:
-        pass
 
 uploaded_files = st.file_uploader("Tải lên danh sách ảnh (JPG, PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
@@ -27,10 +16,10 @@ col1, col2 = st.columns(2)
 with col1:
     crop_x = st.number_input("Tọa độ X góc trái chữ:", value=12)
     crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1380)
-    font_size = st.number_input("Kích thước chữ mới:", value=32)
+    font_scale = st.number_input("Tỷ lệ phóng đại chữ (thay cho kích thước):", value=2.0, step=0.1) # Dùng font_scale thay vì font_size
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=320)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=45)
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=400) # Tăng chiều rộng vùng xóa mặc định
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=70) # Tăng chiều cao vùng xóa mặc định
 
 if uploaded_files and st.button("Xử lý ảnh"):
     zip_buffer = io.BytesIO()
@@ -44,8 +33,8 @@ if uploaded_files and st.button("Xử lý ảnh"):
             h, w, _ = img.shape
 
             # Lấy vùng ảnh cần xử lý
-            y1, y2 = max(0, crop_y), min(h, crop_y + crop_h)
-            x1, x2 = max(0, crop_x), min(w, crop_x + crop_w)
+            y1, y2 = max(0, int(crop_y)), min(h, int(crop_y + crop_h))
+            x1, x2 = max(0, int(crop_x)), min(w, int(crop_x + crop_w))
             roi = img[y1:y2, x1:x2]
 
             if roi.size > 0:
@@ -60,21 +49,37 @@ if uploaded_files and st.button("Xử lý ảnh"):
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 3. Viết chữ ngày tháng mới
+            # 3. Viết chữ ngày tháng mới (Sử dụng kỹ thuật phóng đại phông mặc định)
+            # Tạo một ảnh tạm thời lớn hơn để vẽ chữ
+            scale_factor = float(font_scale)
+            temp_font = ImageFont.load_default()
+            
+            # Ước tính kích thước văn bản
+            text_width, text_height = temp_font.getsize(new_date)
+            
+            # Tạo ảnh tạm thời với nền trong suốt
+            temp_img = Image.new('RGBA', (int(text_width * scale_factor * 1.1), int(text_height * scale_factor * 1.5)), (0, 0, 0, 0))
+            temp_draw = ImageDraw.Draw(temp_img)
+            
+            # Vẽ văn bản lên ảnh tạm thời (phóng đại vị trí và kích thước nếu có thể, nhưng với load_default thì chủ yếu là vị trí)
+            # Vì load_default không hỗ trợ kích thước, ta vẽ nó ở kích thước mặc định và sau đó phóng đại toàn bộ ảnh tạm thời.
+            
+            # Vẽ chữ màu trắng kèm viền xám mỏng nhẹ để rõ nét trên nền gạch
+            temp_draw.text((2, 2), new_date, fill=(80, 80, 80), font=temp_font)
+            temp_draw.text((0, 0), new_date, fill=(255, 255, 255), font=temp_font)
+            
+            # Phóng đại ảnh tạm thời
+            resizing_method = Image.NEAREST # Dùng NEAREST để giữ nét sắc cạnh cho chữ bitmap
+            resized_text_img = temp_img.resize((int(temp_img.width * scale_factor), int(temp_img.height * scale_factor)), resample=resizing_method)
+
+            # Chuyển đổi ảnh gốc sang PIL để chèn chữ
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
-            draw = ImageDraw.Draw(pil_img)
+            
+            # Chèn ảnh chữ đã phóng đại vào ảnh gốc
+            pil_img.paste(resized_text_img, (int(crop_x), int(crop_y)), resized_text_img)
 
-            # Khởi tạo phông chữ Roboto
-            if os.path.exists(FONT_PATH):
-                font = ImageFont.truetype(FONT_PATH, int(font_size))
-            else:
-                font = ImageFont.load_default()
-
-            # Viết chữ màu trắng kèm viền xám mỏng nhẹ để rõ nét trên nền gạch
-            draw.text((crop_x + 1, crop_y + 1), new_date, fill=(80, 80, 80), font=font)
-            draw.text((crop_x, crop_y), new_date, fill=(255, 255, 255), font=font)
-
+            # Chuyển đổi lại sang định dạng để lưu
             out_img = io.BytesIO()
             pil_img.save(out_img, format="JPEG", quality=98)
             zip_file.writestr(f"edited_{uploaded_file.name}", out_img.getvalue())
