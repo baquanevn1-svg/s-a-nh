@@ -1,7 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import io
 import zipfile
 import os
@@ -38,7 +38,7 @@ st.subheader("1. Nội dung thay thế")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 22 tháng 2 2026")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:52:23 GMT+07:00")
 
-st.subheader("2. Thông số vị trí (Giữ nguyên vị trí & cỡ chữ chuẩn)")
+st.subheader("2. Thông số vị trí & Hiệu ứng chữ")
 col1, col2 = st.columns(2)
 with col1:
     crop_x = st.number_input("Tọa độ X góc trái:", value=45)
@@ -48,6 +48,7 @@ with col1:
 with col2:
     crop_w = st.number_input("Chiều rộng vùng xóa:", value=380)
     crop_h = st.number_input("Chiều cao vùng xóa:", value=80)
+    shadow_blur = st.slider("Độ mờ bóng chữ (Blur radius):", min_value=1, max_value=5, value=2, help="Bóng đen mờ ôm sát từng nét chữ")
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -65,11 +66,11 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"Khung đỏ xem trước vị trí xóa (Kích thước ảnh: {p_w}x{p_h})", 
+            caption=f"Khung đỏ vị trí xử lý (Kích thước ảnh: {p_w}x{p_h})", 
             use_container_width=True
         )
 
-if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Nền trong suốt 100%)"):
+if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Bóng mờ ôm sát từng chữ)"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -89,22 +90,20 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Nền trong suố
             x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
             roi = img[y1:y2, x1:x2]
 
+            # 1. XÓA CHỮ CŨ NGUYÊN BẢN (KHÔNG ĐỘNG TỚI CẢNH NỀN)
             if roi.size > 0:
-                # 1. XÓA ĐÚNG NÉT CHỮ CŨ (KHÔNG ĐỘNG ĐẾN MÀU NỀN TỔNG THỂ)
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
                 _, text_mask = cv2.threshold(gray_roi, 160, 255, cv2.THRESH_BINARY)
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
                 text_mask = cv2.dilate(text_mask, kernel, iterations=1)
                 
-                # Phục hồi ảnh cảnh vật tự nhiên phía sau nét chữ
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 2. VẼ CHỮ MỚI (Trực tiếp lên nền tự nhiên, viền bóng đen mỏng)
+            # 2. VẼ BÓNG MỜ TỰ NHIÊN ÔM SÁT THEO TỪNG NÉT CHỮ MỚI
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            pil_img = Image.fromarray(img_rgb)
-            draw = ImageDraw.Draw(pil_img)
-
+            base_pil = Image.fromarray(img_rgb).convert("RGBA")
+            
             font = load_custom_font(int(font_size))
             if font is None:
                 font = ImageFont.load_default()
@@ -112,26 +111,36 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Nền trong suố
             y_line1 = actual_y + 6
             y_line2 = actual_y + 6 + int(line_spacing)
 
-            def draw_text_with_shadow(draw_obj, pos, text_str, font_obj):
-                x, y = pos
-                # Vẽ bóng đổ mỏng xung quanh chữ
-                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)]:
-                    draw_obj.text((x + dx, y + dy), text_str, fill=(0, 0, 0), font=font_obj)
-                # Chữ trắng chính
-                draw_obj.text((x, y), text_str, fill=(255, 255, 255), font=font_obj)
+            # Tạo layer riêng cho bóng mờ đen
+            shadow_layer = Image.new("RGBA", base_pil.size, (0, 0, 0, 0))
+            shadow_draw = ImageDraw.Draw(shadow_layer)
 
+            # Tạo layer riêng cho chữ trắng
+            text_layer = Image.new("RGBA", base_pil.size, (0, 0, 0, 0))
+            text_draw = ImageDraw.Draw(text_layer)
+
+            # Vẽ nét chữ đen lên shadow layer
             if line1:
-                draw_text_with_shadow(draw, (actual_x, y_line1), line1, font)
+                shadow_draw.text((actual_x, y_line1), line1, fill=(0, 0, 0, 220), font=font)
+                text_draw.text((actual_x, y_line1), line1, fill=(255, 255, 255, 255), font=font)
 
             if line2:
-                draw_text_with_shadow(draw, (actual_x, y_line2), line2, font)
+                shadow_draw.text((actual_x, y_line2), line2, fill=(0, 0, 0, 220), font=font)
+                text_draw.text((actual_x, y_line2), line2, fill=(255, 255, 255, 255), font=font)
 
-            # Xuất file ảnh
-            final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            # Làm nhòe/mờ lớp bóng đen ôm theo nét chữ
+            blurred_shadow = shadow_layer.filter(ImageFilter.GaussianBlur(radius=int(shadow_blur)))
+
+            # Chồng các lớp lại: Ảnh gốc -> Bóng mờ ôm nét chữ -> Chữ trắng nét
+            final_pil = Image.alpha_composite(base_pil, blurred_shadow)
+            final_pil = Image.alpha_composite(final_pil, text_layer).convert("RGB")
+
+            # Xuất file ảnh chất lượng cao
+            final_img = cv2.cvtColor(np.array(final_pil), cv2.COLOR_RGB2BGR)
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Nền hoàn toàn trong suốt và tự nhiên.")
+    st.success("✅ Đã xử lý xong! Bóng đen mờ hiện tại đã ôm sát từng nét chữ tự nhiên.")
     st.download_button(
         label="📥 Tải về file ZIP tất cả ảnh đã xử lý",
         data=zip_buffer.getvalue(),
