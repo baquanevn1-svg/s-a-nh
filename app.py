@@ -8,7 +8,7 @@ import os
 import urllib.request
 
 st.set_page_config(page_title="vTools Watermark Editor", layout="wide")
-st.title("📷 Công cụ Sửa Ngày Tháng vTools (Xóa sạch Nền Xám 100%)")
+st.title("📷 Công cụ Sửa Ngày Tháng vTools (Thật 100% Như Ảnh Gốc)")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -39,16 +39,16 @@ st.subheader("1. Nội dung thay thế")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 22 tháng 2 2026")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:52:23 GMT+07:00")
 
-st.subheader("2. Vị trí & Cỡ chữ")
+st.subheader("2. Vị trí & Thông số (Đã căn chuẩn theo vTools)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái:", value=37)
-    crop_y = st.number_input("Tọa độ Y góc trên:", value=1860)
-    font_size = st.number_input("Kích thước phông chữ:", value=28)
-    line_spacing = st.number_input("Khoảng cách 2 dòng:", value=34)
+    crop_x = st.number_input("Tọa độ X (Góc trái chữ):", value=37)
+    crop_y = st.number_input("Tọa độ Y (Dòng ngày tháng):", value=1865)
+    font_size = st.number_input("Kích thước phông chữ:", value=27)
+    line_spacing = st.number_input("Khoảng cách 2 dòng:", value=33)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xử lý:", value=430)
-    crop_h = st.number_input("Chiều cao vùng xử lý:", value=120)
+    overlay_padding_x = st.number_input("Mở rộng lề xám bên trái/phải (px):", value=15)
+    overlay_opacity = st.slider("Độ đậm nền xám vTools (0.0 - 1.0):", min_value=0.1, max_value=0.9, value=0.45, step=0.05)
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -58,38 +58,73 @@ if uploaded_files:
     
     if preview_img is not None:
         p_h, p_w, _ = preview_img.shape
+        # Khung viền xem trước vùng ngày tháng
         cv2.rectangle(
             preview_img, 
             (int(crop_x), int(crop_y)), 
-            (int(crop_x + crop_w), int(crop_y + crop_h)), 
+            (int(crop_x + 400), int(crop_y + 80)), 
             (0, 0, 255), 2
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"Khung đỏ vùng xóa nền xám & chữ cũ (Kích thước ảnh: {p_w}x{p_h})", 
+            caption=f"Khung đỏ vị trí dòng Ngày Tháng (Kích thước ảnh gốc: {p_w}x{p_h})", 
             use_container_width=True
         )
 
-def remove_grey_patch_and_reconstruct(img, x, y, w, h):
+def process_vtools_watermark(img, x, y, line1_str, line2_str, f_size, l_spacing, opacity, pad_x):
     """
-    Thuật toán xóa triệt để khối nền xám mờ và khôi phục cảnh gốc từ vùng lân cận
+    Tái tạo watermark chuẩn vTools:
+    1. Phủ dải xám mờ trong suốt (Semi-transparent overlay) chuẩn tông vTools để ẩn hoàn toàn chữ cũ.
+    2. Vẽ dòng chữ trắng sắc nét + bóng mờ tự nhiên chuẩn vTools.
     """
-    img_h, img_w, _ = img.shape
-    x1, x2 = max(0, x), min(img_w, x + w)
-    y1, y2 = max(0, y), min(img_h, y + h)
+    h_img, w_img, _ = img.shape
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb).convert("RGBA")
 
-    if x2 <= x1 or y2 <= y1:
-        return img
+    font = load_custom_font(int(f_size))
+    if font is None:
+        font = ImageFont.load_default()
 
-    # Tạo mask loại bỏ hoàn toàn vùng hình chữ nhật xám mờ
-    mask = np.zeros((img_h, img_w), dtype=np.uint8)
-    mask[y1:y2, x1:x2] = 255
+    # Tạo layer mờ trong suốt
+    overlay = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
+    draw_overlay = ImageDraw.Draw(overlay)
 
-    # Sử dụng thuật toán Inpainting lấy mẫu từ cảnh vật bên ngoài ô xám (Nét chuẩn tự nhiên)
-    restored = cv2.inpaint(img, mask, inpaintRadius=7, flags=cv2.INPAINT_TELEA)
-    return restored
+    # 1. Tính toán vùng nền xám mờ cần che chữ cũ
+    y1 = max(0, int(y) - 6)
+    y2 = min(h_img, int(y) + int(l_spacing) + int(f_size) + 10)
+    x1 = max(0, int(x) - int(pad_x))
+    x2 = min(w_img, int(x) + 450)
 
-if uploaded_files and st.button("🚀 Xóa Nền Xám & Vẽ Lại Chữ Chuẩn 100%"):
+    # Vẽ dải xám mờ vTools (màu xám tối đục nhẹ, không làm nhòe ảnh gốc)
+    alpha_val = int(opacity * 255)
+    draw_overlay.rectangle([x1, y1, x2, y2], fill=(20, 24, 30, alpha_val))
+
+    # Ghép dải nền xám mờ lên ảnh gốc
+    composed = Image.alpha_composite(pil_img, overlay)
+    draw = ImageDraw.Draw(composed)
+
+    # 2. Vẽ chữ mới chuẩn vTools (Chữ trắng + bóng mờ mềm)
+    y_line1 = int(y)
+    y_line2 = int(y) + int(l_spacing)
+
+    def draw_vtools_text_item(draw_obj, text_pos, text, font_item):
+        tx, ty = text_pos
+        # Bóng đổ mờ phía dưới chuẩn vTools
+        draw_obj.text((tx + 1, ty + 1), text, fill=(0, 0, 0, 220), font=font_item)
+        draw_obj.text((tx + 2, ty + 2), text, fill=(0, 0, 0, 120), font=font_item)
+        # Chữ chính màu trắng tinh
+        draw_obj.text((tx, ty), text, fill=(255, 255, 255, 255), font=font_item)
+
+    if line1_str:
+        draw_vtools_text_item(draw, (int(x), y_line1), line1_str, font)
+    if line2_str:
+        draw_vtools_text_item(draw, (int(x), y_line2), line2_str, font)
+
+    # Chuyển về RGB và xuất BGR cho OpenCV
+    res_rgb = composed.convert("RGB")
+    return cv2.cvtColor(np.array(res_rgb), cv2.COLOR_RGB2BGR)
+
+if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý (Thật 100% Chuẩn vTools)"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -99,47 +134,23 @@ if uploaded_files and st.button("🚀 Xóa Nền Xám & Vẽ Lại Chữ Chuẩn
             if img is None:
                 continue
 
-            actual_x = int(crop_x)
-            actual_y = int(crop_y)
-            actual_w = int(crop_w)
-            actual_h = int(crop_h)
+            final_img = process_vtools_watermark(
+                img, 
+                crop_x, 
+                crop_y, 
+                line1, 
+                line2, 
+                font_size, 
+                line_spacing, 
+                overlay_opacity, 
+                overlay_padding_x
+            )
 
-            # 1. TÁI TẠO NỀN CẢNH GỐC (LOẠI BỎ TRIỆT ĐỂ KHỐI XÁM MỜ)
-            clean_bg_img = remove_grey_patch_and_reconstruct(img, actual_x, actual_y, actual_w, actual_h)
-
-            # 2. VẼ LẠI CHỮ MỚI TRÊN NỀN SẠCH TỰ NHIÊN
-            img_rgb = cv2.cvtColor(clean_bg_img, cv2.COLOR_BGR2RGB)
-            pil_img = Image.fromarray(img_rgb)
-            draw = ImageDraw.Draw(pil_img)
-
-            font = load_custom_font(int(font_size))
-            if font is None:
-                font = ImageFont.load_default()
-
-            y_line1 = actual_y + 8
-            y_line2 = actual_y + 8 + int(line_spacing)
-
-            # Vẽ chữ màu trắng có viền bóng đen mảnh (Drop shadow) sắc nét không cần ô xám
-            def draw_vtools_text(draw_obj, pos, text_str, font_obj):
-                tx, ty = pos
-                # Viền đen 4 hướng tạo độ nổi cho chữ trên mọi nền ảnh
-                for dx, dy in [(-1,-1), (-1,1), (1,-1), (1,1), (0,1), (1,0), (0,-1), (-1,0)]:
-                    draw_obj.text((tx + dx, ty + dy), text_str, fill=(0, 0, 0), font=font_obj)
-                # Chữ chính màu trắng sáng
-                draw_obj.text((tx, ty), text_str, fill=(255, 255, 255), font=font_obj)
-
-            if line1:
-                draw_vtools_text(draw, (actual_x, y_line1), line1, font)
-
-            if line2:
-                draw_vtools_text(draw, (actual_x, y_line2), line2, font)
-
-            # Xuất ảnh JPG chất lượng cao 98%
-            final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            # Xuất chất lượng JPEG cao nhất 98%
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Khối nền xám đục đã bị xóa hoàn toàn, chữ mới tự nhiên sắc nét trên nền cảnh thực tế.")
+    st.success("✅ Đã xử lý xong! Ảnh nét căng, dải nền xám mờ hòa quyện tự nhiên như ảnh gốc vTools.")
     st.download_button(
         label="📥 Tải về file ZIP tất cả ảnh đã xử lý",
         data=zip_buffer.getvalue(),
