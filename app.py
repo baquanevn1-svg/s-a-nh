@@ -7,7 +7,8 @@ import zipfile
 import os
 import urllib.request
 
-st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát (vTools Survey)")
+st.set_page_config(page_title="vTools Watermark Editor", layout="wide")
+st.title("📷 Công cụ Sửa Ngày Tháng vTools (Xóa sạch Nền Xám 100%)")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -32,24 +33,22 @@ def load_custom_font(font_size):
             pass
     return None
 
-uploaded_files = st.file_uploader("Tải lên danh sách ảnh (JPG, PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Tải lên danh sách ảnh vTools (JPG, PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 st.subheader("1. Nội dung thay thế")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 22 tháng 2 2026")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:52:23 GMT+07:00")
 
-st.subheader("2. Thông số vị trí & Cỡ chữ (Đã chuẩn hóa vị trí ngày tháng)")
+st.subheader("2. Vị trí & Cỡ chữ")
 col1, col2 = st.columns(2)
 with col1:
     crop_x = st.number_input("Tọa độ X góc trái:", value=37)
-    # Tọa độ Y được chỉnh chuẩn xuống 1870 để tránh đè dòng "Hướng chụp" phía trên
-    crop_y = st.number_input("Tọa độ Y góc trên:", value=1870)
+    crop_y = st.number_input("Tọa độ Y góc trên:", value=1860)
     font_size = st.number_input("Kích thước phông chữ:", value=28)
     line_spacing = st.number_input("Khoảng cách 2 dòng:", value=34)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=420)
-    # Tăng chiều cao lên 110px để bao trọn hoàn toàn 2 dòng chữ cũ
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=110)
+    crop_w = st.number_input("Chiều rộng vùng xử lý:", value=430)
+    crop_h = st.number_input("Chiều cao vùng xử lý:", value=120)
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -67,11 +66,30 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"Khung đỏ vị trí xử lý ngày tháng (Kích thước ảnh: {p_w}x{p_h})", 
+            caption=f"Khung đỏ vùng xóa nền xám & chữ cũ (Kích thước ảnh: {p_w}x{p_h})", 
             use_container_width=True
         )
 
-if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa Sạch Chữ Cũ & Tránh Chồng Đè)"):
+def remove_grey_patch_and_reconstruct(img, x, y, w, h):
+    """
+    Thuật toán xóa triệt để khối nền xám mờ và khôi phục cảnh gốc từ vùng lân cận
+    """
+    img_h, img_w, _ = img.shape
+    x1, x2 = max(0, x), min(img_w, x + w)
+    y1, y2 = max(0, y), min(img_h, y + h)
+
+    if x2 <= x1 or y2 <= y1:
+        return img
+
+    # Tạo mask loại bỏ hoàn toàn vùng hình chữ nhật xám mờ
+    mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    mask[y1:y2, x1:x2] = 255
+
+    # Sử dụng thuật toán Inpainting lấy mẫu từ cảnh vật bên ngoài ô xám (Nét chuẩn tự nhiên)
+    restored = cv2.inpaint(img, mask, inpaintRadius=7, flags=cv2.INPAINT_TELEA)
+    return restored
+
+if uploaded_files and st.button("🚀 Xóa Nền Xám & Vẽ Lại Chữ Chuẩn 100%"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -80,34 +98,17 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa Sạch Chữ
             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
             if img is None:
                 continue
-            h, w, _ = img.shape
 
             actual_x = int(crop_x)
             actual_y = int(crop_y)
             actual_w = int(crop_w)
             actual_h = int(crop_h)
 
-            y1, y2 = max(0, actual_y), min(h, actual_y + actual_h)
-            x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
-            
-            roi = img[y1:y2, x1:x2]
+            # 1. TÁI TẠO NỀN CẢNH GỐC (LOẠI BỎ TRIỆT ĐỂ KHỐI XÁM MỜ)
+            clean_bg_img = remove_grey_patch_and_reconstruct(img, actual_x, actual_y, actual_w, actual_h)
 
-            # 1. XÓA TRIỆT ĐỂ CHỮ CŨ NẰM TRONG KHUNG
-            if roi.size > 0:
-                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                # Quét tất cả màu chữ sáng và viền xám mờ xung quanh
-                _, text_mask = cv2.threshold(gray_roi, 150, 255, cv2.THRESH_BINARY)
-                
-                # Phóng to nét chữ cần xóa thêm 2px để bao quanh
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                text_mask = cv2.dilate(text_mask, kernel, iterations=1)
-                
-                # Tái tạo lại nền gốc của cảnh vật
-                cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
-                img[y1:y2, x1:x2] = cleaned_roi
-
-            # 2. VẼ CHỮ MỚI VỚI BÓNG ĐỔ TỰ NHIÊN
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            # 2. VẼ LẠI CHỮ MỚI TRÊN NỀN SẠCH TỰ NHIÊN
+            img_rgb = cv2.cvtColor(clean_bg_img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
 
@@ -115,29 +116,30 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa Sạch Chữ
             if font is None:
                 font = ImageFont.load_default()
 
-            y_line1 = actual_y + 6
-            y_line2 = actual_y + 6 + int(line_spacing)
+            y_line1 = actual_y + 8
+            y_line2 = actual_y + 8 + int(line_spacing)
 
-            # Hàm vẽ chữ bóng đổ mảnh bám sát (Drop shadow chuẩn vTools)
-            def draw_clean_text(draw_obj, pos, text_str, font_obj):
-                x, y = pos
-                # Bóng đen 1px phía dưới
-                draw_obj.text((x + 1, y + 1), text_str, fill=(0, 0, 0), font=font_obj)
-                # Chữ chính màu trắng
-                draw_obj.text((x, y), text_str, fill=(255, 255, 255), font=font_obj)
+            # Vẽ chữ màu trắng có viền bóng đen mảnh (Drop shadow) sắc nét không cần ô xám
+            def draw_vtools_text(draw_obj, pos, text_str, font_obj):
+                tx, ty = pos
+                # Viền đen 4 hướng tạo độ nổi cho chữ trên mọi nền ảnh
+                for dx, dy in [(-1,-1), (-1,1), (1,-1), (1,1), (0,1), (1,0), (0,-1), (-1,0)]:
+                    draw_obj.text((tx + dx, ty + dy), text_str, fill=(0, 0, 0), font=font_obj)
+                # Chữ chính màu trắng sáng
+                draw_obj.text((tx, ty), text_str, fill=(255, 255, 255), font=font_obj)
 
             if line1:
-                draw_clean_text(draw, (actual_x, y_line1), line1, font)
+                draw_vtools_text(draw, (actual_x, y_line1), line1, font)
 
             if line2:
-                draw_clean_text(draw, (actual_x, y_line2), line2, font)
+                draw_vtools_text(draw, (actual_x, y_line2), line2, font)
 
-            # Xuất ảnh chất lượng cao 98%
+            # Xuất ảnh JPG chất lượng cao 98%
             final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Dòng chữ mới đã nằm đúng vị trí, không còn bị dính đè lên chữ cũ.")
+    st.success("✅ Đã xử lý xong! Khối nền xám đục đã bị xóa hoàn toàn, chữ mới tự nhiên sắc nét trên nền cảnh thực tế.")
     st.download_button(
         label="📥 Tải về file ZIP tất cả ảnh đã xử lý",
         data=zip_buffer.getvalue(),
