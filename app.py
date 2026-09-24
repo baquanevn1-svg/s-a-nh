@@ -7,9 +7,8 @@ import zipfile
 import os
 import urllib.request
 
-st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát (2 Dòng Cuối)")
+st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát")
 
-# Nạp phông chữ Roboto mỏng chuẩn ứng dụng
 @st.cache_resource
 def load_custom_font(font_size):
     font_filename = "Roboto-Regular.ttf"
@@ -35,22 +34,43 @@ def load_custom_font(font_size):
 
 uploaded_files = st.file_uploader("Tải lên danh sách ảnh (JPG, PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-st.subheader("Nhập thông tin thay thế")
-line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 15 tháng 2 2025")
-line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:28:23 GMT+07:00")
+st.subheader("1. Nội dung thay thế")
+line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 22 tháng 2 2026")
+line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:52:23 GMT+07:00")
 
-st.subheader("Cấu hình vị trí văn bản")
+st.subheader("2. Thông số vị trí (Đã chỉnh chuẩn cho ảnh dọc)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái:", value=50)
-    crop_y = st.number_input("Tọa độ Y góc trên (Bắt đầu vùng 2 dòng cuối):", value=920)
-    font_size = st.number_input("Kích thước phông chữ (Mặc định 18-22):", value=20)
-    line_spacing = st.number_input("Khoảng cách giữa 2 dòng:", value=24)
+    crop_x = st.number_input("Tọa độ X góc trái:", value=60)
+    crop_y = st.number_input("Tọa độ Y góc trên:", value=1770)
+    font_size = st.number_input("Kích thước phông chữ:", value=22)
+    line_spacing = st.number_input("Khoảng cách 2 dòng:", value=28)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=320)
-    crop_h = st.number_input("Chiều cao vùng xóa (Xóa cả 2 dòng):", value=55)
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=360)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=70)
 
-if uploaded_files and st.button("Xử lý ảnh"):
+if uploaded_files:
+    # Hiển thị khung xem trước vị trí xóa trên ảnh đầu tiên
+    first_file = uploaded_files[0]
+    file_bytes = np.asarray(bytearray(first_file.read()), dtype=np.uint8)
+    first_file.seek(0)
+    preview_img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    
+    if preview_img is not None:
+        p_h, p_w, _ = preview_img.shape
+        cv2.rectangle(
+            preview_img, 
+            (int(crop_x), int(crop_y)), 
+            (int(crop_x + crop_w), int(crop_y + crop_h)), 
+            (0, 0, 255), 3
+        )
+        st.image(
+            cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
+            caption=f"Vùng màu đỏ sẽ bị xóa và đè chữ mới (Kích thước ảnh: {p_w}x{p_h})", 
+            use_container_width=True
+        )
+
+if uploaded_files and st.button("🚀 Bắt đầu Xử lý ảnh"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -66,7 +86,7 @@ if uploaded_files and st.button("Xử lý ảnh"):
             actual_w = int(crop_w)
             actual_h = int(crop_h)
 
-            # 1. Xóa 2 dòng chữ cũ giữ nguyên 100% nền phía sau
+            # 1. Xóa vùng chữ cũ
             y1, y2 = max(0, actual_y), min(h, actual_y + actual_h)
             x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
             roi = img[y1:y2, x1:x2]
@@ -74,11 +94,10 @@ if uploaded_files and st.button("Xử lý ảnh"):
             if roi.size > 0:
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
                 _, text_mask = cv2.threshold(gray_roi, 160, 255, cv2.THRESH_BINARY)
-                # Bán kính 1px giữ trọn vẹn chi tiết nền
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 2. Chuyển sang PIL vẽ 2 dòng chữ nét mảnh chuẩn phông gốc
+            # 2. Vẽ 2 dòng chữ mới
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
@@ -87,17 +106,13 @@ if uploaded_files and st.button("Xử lý ảnh"):
             if font is None:
                 font = ImageFont.load_default()
 
-            # Tọa độ dòng 1
-            y_line1 = actual_y
-            # Tọa độ dòng 2
-            y_line2 = actual_y + int(line_spacing)
+            y_line1 = actual_y + 4
+            y_line2 = actual_y + 4 + int(line_spacing)
 
-            # Vẽ dòng 1 (Ngày tháng)
             if line1:
                 draw.text((actual_x + 1, y_line1 + 1), line1, fill=(30, 30, 30), font=font)
                 draw.text((actual_x, y_line1), line1, fill=(255, 255, 255), font=font)
 
-            # Vẽ dòng 2 (Giờ + GMT)
             if line2:
                 draw.text((actual_x + 1, y_line2 + 1), line2, fill=(30, 30, 30), font=font)
                 draw.text((actual_x, y_line2), line2, fill=(255, 255, 255), font=font)
