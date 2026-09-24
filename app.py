@@ -1,7 +1,6 @@
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
 import io
 import zipfile
 
@@ -14,12 +13,14 @@ new_date = st.text_input("Ngày tháng năm mới mong muốn:", "2026/09/23 16:
 st.subheader("Cấu hình vị trí văn bản (Góc dưới bên trái)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=12)
-    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1380)
-    font_scale = st.number_input("Tỷ lệ phóng đại chữ (thay cho kích thước):", value=2.0, step=0.1) # Dùng font_scale thay vì font_size
+    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=15)
+    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1400)
+    font_scale = st.number_input("Độ phóng to chữ (Font Scale):", value=1.0, step=0.1)
+    thickness = st.number_input("Độ nét / độ dày nét chữ:", value=2, min_value=1, max_value=5)
+
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=400) # Tăng chiều rộng vùng xóa mặc định
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=70) # Tăng chiều cao vùng xóa mặc định
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=320)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=45)
 
 if uploaded_files and st.button("Xử lý ảnh"):
     zip_buffer = io.BytesIO()
@@ -38,51 +39,30 @@ if uploaded_files and st.button("Xử lý ảnh"):
             roi = img[y1:y2, x1:x2]
 
             if roi.size > 0:
-                # 1. Chuyển sang ảnh xám để tìm nét chữ màu sáng
+                # 1. Tách nét chữ sáng màu
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
                 _, text_mask = cv2.threshold(gray_roi, 170, 255, cv2.THRESH_BINARY)
                 
                 kernel = np.ones((2, 2), np.uint8)
                 text_mask = cv2.dilate(text_mask, kernel, iterations=1)
 
-                # 2. Xóa nét chữ mỏng bằng Inpaint
+                # 2. Xóa chữ mỏng bằng Inpaint (giữ nguyên vân gạch)
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 3. Viết chữ ngày tháng mới (Sử dụng kỹ thuật phóng đại phông mặc định)
-            # Tạo một ảnh tạm thời lớn hơn để vẽ chữ
-            scale_factor = float(font_scale)
-            temp_font = ImageFont.load_default()
-            
-            # Ước tính kích thước văn bản
-            text_width, text_height = temp_font.getsize(new_date)
-            
-            # Tạo ảnh tạm thời với nền trong suốt
-            temp_img = Image.new('RGBA', (int(text_width * scale_factor * 1.1), int(text_height * scale_factor * 1.5)), (0, 0, 0, 0))
-            temp_draw = ImageDraw.Draw(temp_img)
-            
-            # Vẽ văn bản lên ảnh tạm thời (phóng đại vị trí và kích thước nếu có thể, nhưng với load_default thì chủ yếu là vị trí)
-            # Vì load_default không hỗ trợ kích thước, ta vẽ nó ở kích thước mặc định và sau đó phóng đại toàn bộ ảnh tạm thời.
-            
-            # Vẽ chữ màu trắng kèm viền xám mỏng nhẹ để rõ nét trên nền gạch
-            temp_draw.text((2, 2), new_date, fill=(80, 80, 80), font=temp_font)
-            temp_draw.text((0, 0), new_date, fill=(255, 255, 255), font=temp_font)
-            
-            # Phóng đại ảnh tạm thời
-            resizing_method = Image.NEAREST # Dùng NEAREST để giữ nét sắc cạnh cho chữ bitmap
-            resized_text_img = temp_img.resize((int(temp_img.width * scale_factor), int(temp_img.height * scale_factor)), resample=resizing_method)
+            # 3. Viết chữ mới bằng OpenCV (Chắc chắn chỉnh to nhỏ được 100%)
+            font_face = cv2.FONT_HERSHEY_SIMPLEX
+            text_x = int(crop_x) + 2
+            text_y = int(crop_y) + int(crop_h) - 10 # Căn dòng chữ nằm vừa khung
 
-            # Chuyển đổi ảnh gốc sang PIL để chèn chữ
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            pil_img = Image.fromarray(img_rgb)
-            
-            # Chèn ảnh chữ đã phóng đại vào ảnh gốc
-            pil_img.paste(resized_text_img, (int(crop_x), int(crop_y)), resized_text_img)
+            # Vẽ lớp bóng mờ màu đen phía sau để chữ nổi bật trên nền gạch
+            cv2.putText(img, new_date, (text_x + 1, text_y + 1), font_face, float(font_scale), (0, 0, 0), int(thickness) + 1, cv2.LINE_AA)
+            # Vẽ chữ màu trắng phía trước
+            cv2.putText(img, new_date, (text_x, text_y), font_face, float(font_scale), (255, 255, 255), int(thickness), cv2.LINE_AA)
 
-            # Chuyển đổi lại sang định dạng để lưu
-            out_img = io.BytesIO()
-            pil_img.save(out_img, format="JPEG", quality=98)
-            zip_file.writestr(f"edited_{uploaded_file.name}", out_img.getvalue())
+            # Lưu ảnh ra file ZIP
+            _, encoded_img = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
+            zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
     st.success("✅ Hoàn tất xử lý!")
     st.download_button(
