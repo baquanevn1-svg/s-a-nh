@@ -25,12 +25,12 @@ new_date = st.text_input("Ngày tháng năm mới mong muốn:", "2026/09/23 16:
 st.subheader("Cấu hình vị trí văn bản (Góc dưới bên trái)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=15)
-    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=965)
-    font_size = st.number_input("Kích thước phông chữ:", value=22)
+    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=12)
+    crop_y = st.number_input("Tọa độ Y góc trên chữ (Mặc định góc dưới):", value=1385)
+    font_size = st.number_input("Kích thước phông chữ:", value=28)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=250)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=30)
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=320)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=40)
 
 if uploaded_files and st.button("Xử lý ảnh"):
     zip_buffer = io.BytesIO()
@@ -43,37 +43,43 @@ if uploaded_files and st.button("Xử lý ảnh"):
                 continue
             h, w, _ = img.shape
 
-            # Xử lý vùng xóa chữ cũ
-            y1, y2 = max(0, int(crop_y)), min(h, int(crop_y + crop_h))
-            x1, x2 = max(0, int(crop_x)), min(w, int(crop_x + crop_w))
+            # Tự động căn tọa độ Y nếu Y nhập lớn hơn chiều cao ảnh
+            actual_y = min(int(crop_y), h - int(crop_h) - 5) if int(crop_y) < h else h - 45
+            actual_x = int(crop_x)
+            actual_w = int(crop_w)
+            actual_h = int(crop_h)
+
+            # 1. Xóa vùng chữ cũ bằng cách phủ nền tự nhiên từ vùng xung quanh
+            y1, y2 = max(0, actual_y), min(h, actual_y + actual_h)
+            x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
             roi = img[y1:y2, x1:x2]
 
             if roi.size > 0:
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                _, text_mask = cv2.threshold(gray_roi, 160, 255, cv2.THRESH_BINARY)
+                _, text_mask = cv2.threshold(gray_roi, 150, 255, cv2.THRESH_BINARY)
                 
-                kernel = np.ones((2, 2), np.uint8)
+                kernel = np.ones((3, 3), np.uint8)
                 text_mask = cv2.dilate(text_mask, kernel, iterations=1)
 
-                cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
+                # Inpaint xóa sạch chữ gốc
+                cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # Viết chữ mới bằng Pillow với phông chữ Roboto
+            # 2. Viết chữ mới đè chính xác lên vị trí vừa xóa
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
 
-            # Khởi tạo phông chữ
             if os.path.exists(FONT_FILE):
                 font = ImageFont.truetype(FONT_FILE, int(font_size))
             else:
                 font = ImageFont.load_default()
 
-            # Viết chữ màu trắng kèm viền đổ bóng nhẹ nét mảnh
-            draw.text((int(crop_x) + 1, int(crop_y) + 1), new_date, fill=(60, 60, 60), font=font)
-            draw.text((int(crop_x), int(crop_y)), new_date, fill=(255, 255, 255), font=font)
+            # Viết chữ trắng nét mảnh kèm viền xám nhẹ đổ bóng
+            draw.text((actual_x + 1, actual_y + 1), new_date, fill=(50, 50, 50), font=font)
+            draw.text((actual_x, actual_y), new_date, fill=(255, 255, 255), font=font)
 
-            # Lưu file ảnh
+            # Lưu file ảnh xuất ra
             final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
