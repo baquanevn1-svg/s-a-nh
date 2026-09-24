@@ -1,8 +1,10 @@
 import streamlit as st
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 import io
 import zipfile
+import os
 
 st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát")
 
@@ -13,14 +15,12 @@ new_date = st.text_input("Ngày tháng năm mới mong muốn:", "2026/09/23 16:
 st.subheader("Cấu hình vị trí văn bản (Góc dưới bên trái)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=15)
-    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1400)
-    font_scale = st.number_input("Độ phóng to chữ (Font Scale):", value=1.0, step=0.1)
-    thickness = st.number_input("Độ nét / độ dày nét chữ:", value=2, min_value=1, max_value=5)
-
+    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=10)
+    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=965)
+    font_size = st.number_input("Kích thước phông chữ:", value=15)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=320)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=45)
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=220)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=25)
 
 if uploaded_files and st.button("Xử lý ảnh"):
     zip_buffer = io.BytesIO()
@@ -33,35 +33,61 @@ if uploaded_files and st.button("Xử lý ảnh"):
                 continue
             h, w, _ = img.shape
 
-            # Lấy vùng ảnh cần xử lý
-            y1, y2 = max(0, int(crop_y)), min(h, int(crop_y + crop_h))
-            x1, x2 = max(0, int(crop_x)), min(w, int(crop_x + crop_w))
+            # Lấy vị trí vùng xóa (tự động điều chỉnh theo tỉ lệ kích thước ảnh gốc)
+            # Tỉ lệ tính theo ảnh mẫu chuẩn (1000x1000)
+            scale_ratio = h / 1000.0
+            actual_x = int(crop_x * scale_ratio)
+            actual_y = int(crop_y * scale_ratio)
+            actual_w = int(crop_w * scale_ratio)
+            actual_h = int(crop_h * scale_ratio)
+            actual_font_size = int(font_size * scale_ratio)
+
+            # 1. Tách nét chữ sáng màu
+            y1, y2 = max(0, actual_y), min(h, actual_y + actual_h)
+            x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
             roi = img[y1:y2, x1:x2]
 
             if roi.size > 0:
-                # 1. Tách nét chữ sáng màu
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                _, text_mask = cv2.threshold(gray_roi, 170, 255, cv2.THRESH_BINARY)
+                _, text_mask = cv2.threshold(gray_roi, 160, 255, cv2.THRESH_BINARY)
                 
                 kernel = np.ones((2, 2), np.uint8)
                 text_mask = cv2.dilate(text_mask, kernel, iterations=1)
 
-                # 2. Xóa chữ mỏng bằng Inpaint (giữ nguyên vân gạch)
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 3. Viết chữ mới bằng OpenCV (Chắc chắn chỉnh to nhỏ được 100%)
-            font_face = cv2.FONT_HERSHEY_SIMPLEX
-            text_x = int(crop_x) + 2
-            text_y = int(crop_y) + int(crop_h) - 10 # Căn dòng chữ nằm vừa khung
+            # 2. Chuyển sang PIL để viết chữ chuẩn phông nét mảnh
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(img_rgb)
+            draw = ImageDraw.Draw(pil_img)
 
-            # Vẽ lớp bóng mờ màu đen phía sau để chữ nổi bật trên nền gạch
-            cv2.putText(img, new_date, (text_x + 1, text_y + 1), font_face, float(font_scale), (0, 0, 0), int(thickness) + 1, cv2.LINE_AA)
-            # Vẽ chữ màu trắng phía trước
-            cv2.putText(img, new_date, (text_x, text_y), font_face, float(font_scale), (255, 255, 255), int(thickness), cv2.LINE_AA)
+            # Nạp font Sans-Serif chuẩn hệ thống Linux Server
+            font = None
+            font_paths = [
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "LiberationSans-Regular.ttf",
+                "DejaVuSans.ttf"
+            ]
+            for path in font_paths:
+                if os.path.exists(path):
+                    try:
+                        font = ImageFont.truetype(path, actual_font_size)
+                        break
+                    except:
+                        pass
+            
+            if font is None:
+                font = ImageFont.load_default()
 
-            # Lưu ảnh ra file ZIP
-            _, encoded_img = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
+            # Viết chữ màu trắng nét mảnh kèm bóng đổ nhẹ chuẩn như ảnh gốc
+            draw.text((actual_x + 1, actual_y + 1), new_date, fill=(50, 50, 50), font=font)
+            draw.text((actual_x, actual_y), new_date, fill=(255, 255, 255), font=font)
+
+            # Chuyển ngược lại để xuất file
+            final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
     st.success("✅ Hoàn tất xử lý!")
