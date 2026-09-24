@@ -69,7 +69,7 @@ if uploaded_files:
             use_container_width=True
         )
 
-if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa sạch mảng đen - Chuẩn ảnh gốc)"):
+if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Khôi Phục Nền Sạch Tự Nhiên)"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -87,23 +87,29 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa sạch mản
 
             y1, y2 = max(0, actual_y), min(h, actual_y + actual_h)
             x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
-            roi = img[y1:y2, x1:x2]
-
-            # 1. BƯỚC XÓA SẠCH NÉT CHỮ CŨ MÀ KHÔNG TẠO BẤT KỲ MẢNG ĐEN/XÁM NÀO
-            if roi.size > 0:
+            
+            # 1. KĨ THUẬT PATCH NỀN TỰ NHIÊN: Lấy mẫu vùng nền sạch gần kề để khôi phục tường/đất
+            patch_height = y2 - y1
+            # Lấy mẫu ngay phía trên (nếu có thể) hoặc vùng bên cạnh
+            sample_y1 = max(0, y1 - patch_height)
+            sample_y2 = y1
+            
+            if sample_y2 - sample_y1 == patch_height and patch_height > 0 and (x2 - x1) > 0:
+                clean_sample = img[sample_y1:sample_y2, x1:x2].copy()
+                # Hòa trộn biên nhòe nhẹ ở các góc giao thoa
+                mask = np.ones((patch_height, x2 - x1), dtype=np.float32)
+                mask = cv2.GaussianBlur(mask, (15, 15), 0)
+                
+                # Trám vùng nền sạch chuẩn màu cảnh vật
+                img[y1:y2, x1:x2] = cv2.addWeighted(clean_sample, 0.85, img[y1:y2, x1:x2], 0.15, 0)
+            else:
+                # Nếu sát mép trên thì dùng Inpaint siêu mịn
+                roi = img[y1:y2, x1:x2]
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                # Lọc chính xác các điểm ảnh chữ màu trắng
-                _, text_mask = cv2.threshold(gray_roi, 160, 255, cv2.THRESH_BINARY)
-                
-                # Mở rộng nét chữ 1.5px để trùm hết viền chữ cũ
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                text_mask = cv2.dilate(text_mask, kernel, iterations=1)
-                
-                # Thuật toán Navier-Stokes tái tạo đúng màu nền tự nhiên (không bị mảng đen)
-                cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=2, flags=cv2.INPAINT_NS)
-                img[y1:y2, x1:x2] = cleaned_roi
+                _, text_mask = cv2.threshold(gray_roi, 180, 255, cv2.THRESH_BINARY)
+                img[y1:y2, x1:x2] = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
 
-            # 2. VẼ CHỮ TRỰC TIẾP LÊN NỀN ẢNH GỐC (HOÀN TOÀN KHÔNG CÓ LỚP PHỦ MỜ/OVERLAY)
+            # 2. VẼ CHỮ VỚI BÓNG ĐỔ (DROP SHADOW) TỰ NHIÊN Y HỆT APP GỐC
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
@@ -115,29 +121,26 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa sạch mản
             y_line1 = actual_y + 4
             y_line2 = actual_y + 4 + int(line_spacing)
 
-            # Hàm vẽ chữ có viền đen mỏng 1px bám sát nét chữ (y hệt các dòng phía trên)
-            def draw_text_stroke(draw_obj, pos, text_str, font_obj):
+            # Hàm vẽ chữ bóng đổ tự nhiên (không bị mảng đen)
+            def draw_text_with_shadow(draw_obj, pos, text_str, font_obj):
                 x, y = pos
-                # Vẽ viền đen 1px quanh nét chữ
-                for dx in [-1, 0, 1]:
-                    for dy in [-1, 0, 1]:
-                        if dx != 0 or dy != 0:
-                            draw_obj.text((x + dx, y + dy), text_str, fill=(0, 0, 0), font=font_obj)
-                # Chữ màu trắng
+                # Bóng đổ nhẹ góc dưới bên phải (Drop shadow)
+                draw_obj.text((x + 1, y + 1), text_str, fill=(20, 20, 20), font=font_obj)
+                # Chữ trắng chính
                 draw_obj.text((x, y), text_str, fill=(255, 255, 255), font=font_obj)
 
             if line1:
-                draw_text_stroke(draw, (actual_x, y_line1), line1, font)
+                draw_text_with_shadow(draw, (actual_x, y_line1), line1, font)
 
             if line2:
-                draw_text_stroke(draw, (actual_x, y_line2), line2, font)
+                draw_text_with_shadow(draw, (actual_x, y_line2), line2, font)
 
-            # Xuất ảnh
+            # Xuất ảnh chất lượng cao
             final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Mảng đen đã bị loại bỏ hoàn toàn trên tất cả các bức ảnh.")
+    st.success("✅ Đã xử lý xong! Nền tường/bầu trời đã hoàn toàn sạch sẽ tự nhiên.")
     st.download_button(
         label="📥 Tải về file ZIP tất cả ảnh đã xử lý",
         data=zip_buffer.getvalue(),
