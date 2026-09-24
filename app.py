@@ -7,9 +7,9 @@ import zipfile
 import os
 import urllib.request
 
-st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát")
+st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát (2 Dòng Cuối)")
 
-# Hàm nạp phông chữ đảm bảo thành công 100%
+# Nạp phông chữ Roboto mỏng chuẩn ứng dụng
 @st.cache_resource
 def load_custom_font(font_size):
     font_filename = "Roboto-Regular.ttf"
@@ -35,17 +35,20 @@ def load_custom_font(font_size):
 
 uploaded_files = st.file_uploader("Tải lên danh sách ảnh (JPG, PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-new_date = st.text_input("Ngày tháng năm mới mong muốn:", "2026/09/23 16:22:53")
+st.subheader("Nhập thông tin thay thế")
+line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 15 tháng 2 2025")
+line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:28:23 GMT+07:00")
 
-st.subheader("Cấu hình vị trí văn bản (Góc dưới bên trái)")
+st.subheader("Cấu hình vị trí văn bản")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=15)
-    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1400)
-    font_size = st.number_input("Kích thước phông chữ:", value=22)
+    crop_x = st.number_input("Tọa độ X góc trái:", value=50)
+    crop_y = st.number_input("Tọa độ Y góc trên (Bắt đầu vùng 2 dòng cuối):", value=920)
+    font_size = st.number_input("Kích thước phông chữ (Mặc định 18-22):", value=20)
+    line_spacing = st.number_input("Khoảng cách giữa 2 dòng:", value=24)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=250)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=35)
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=320)
+    crop_h = st.number_input("Chiều cao vùng xóa (Xóa cả 2 dòng):", value=55)
 
 if uploaded_files and st.button("Xử lý ảnh"):
     zip_buffer = io.BytesIO()
@@ -63,45 +66,43 @@ if uploaded_files and st.button("Xử lý ảnh"):
             actual_w = int(crop_w)
             actual_h = int(crop_h)
 
-            # 1. Tách và xóa nét chữ cũ giữ nguyên 100% vân gạch
+            # 1. Xóa 2 dòng chữ cũ giữ nguyên 100% nền phía sau
             y1, y2 = max(0, actual_y), min(h, actual_y + actual_h)
             x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
             roi = img[y1:y2, x1:x2]
 
             if roi.size > 0:
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                _, text_mask = cv2.threshold(gray_roi, 170, 255, cv2.THRESH_BINARY)
+                _, text_mask = cv2.threshold(gray_roi, 160, 255, cv2.THRESH_BINARY)
+                # Bán kính 1px giữ trọn vẹn chi tiết nền
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 2. Tạo chữ mới chuẩn nét
+            # 2. Chuyển sang PIL vẽ 2 dòng chữ nét mảnh chuẩn phông gốc
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
-            
+            draw = ImageDraw.Draw(pil_img)
+
             font = load_custom_font(int(font_size))
+            if font is None:
+                font = ImageFont.load_default()
 
-            if font is not None:
-                # Nếu nạp thành công phông Roboto
-                draw = ImageDraw.Draw(pil_img)
-                draw.text((actual_x + 1, actual_y + 1), new_date, fill=(40, 40, 40), font=font)
-                draw.text((actual_x, actual_y), new_date, fill=(255, 255, 255), font=font)
-            else:
-                # Dự phòng nếu không có mạng: Ph phóng đại phông chữ chính xác theo font_size
-                scale_factor = font_size / 10.0
-                temp_font = ImageFont.load_default()
-                
-                # Tạo lớp chữ nét phóng đại
-                txt_img = Image.new('RGBA', (300, 30), (0, 0, 0, 0))
-                txt_draw = ImageDraw.Draw(txt_img)
-                txt_draw.text((1, 1), new_date, fill=(40, 40, 40), font=temp_font)
-                txt_draw.text((0, 0), new_date, fill=(255, 255, 255), font=temp_font)
-                
-                new_w = int(txt_img.width * scale_factor)
-                new_h = int(txt_img.height * scale_factor)
-                resized_txt = txt_img.resize((new_w, new_h), Image.NEAREST)
-                pil_img.paste(resized_txt, (actual_x, actual_y), resized_txt)
+            # Tọa độ dòng 1
+            y_line1 = actual_y
+            # Tọa độ dòng 2
+            y_line2 = actual_y + int(line_spacing)
 
-            # Xuất file ảnh
+            # Vẽ dòng 1 (Ngày tháng)
+            if line1:
+                draw.text((actual_x + 1, y_line1 + 1), line1, fill=(30, 30, 30), font=font)
+                draw.text((actual_x, y_line1), line1, fill=(255, 255, 255), font=font)
+
+            # Vẽ dòng 2 (Giờ + GMT)
+            if line2:
+                draw.text((actual_x + 1, y_line2 + 1), line2, fill=(30, 30, 30), font=font)
+                draw.text((actual_x, y_line2), line2, fill=(255, 255, 255), font=font)
+
+            # Xuất file
             final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
