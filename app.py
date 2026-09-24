@@ -27,20 +27,22 @@ if uploaded_files and st.button("Xử lý ảnh"):
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
         for idx, uploaded_file in enumerate(uploaded_files):
             # Đọc ảnh
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=uint8)
+            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            if img is None:
+                continue
             h, w, _ = img.shape
 
-            # 1. Tạo Mask vừa sát khít chữ
+            # 1. Tạo Mask sát khít dòng chữ
             mask = np.zeros((h, w), np.uint8)
             y1, y2 = max(0, crop_y), min(h, crop_y + crop_h)
             x1, x2 = max(0, crop_x), min(w, crop_x + crop_w)
             mask[y1:y2, x1:x2] = 255
 
-            # 2. Xóa chữ mịn bằng Navier-Stokes (bán kính nhỏ = 1 để không mất vân gạch)
+            # 2. Xóa chữ giữ nguyên vân gạch (bán kính nhỏ inpaintRadius=1)
             inpainted = cv2.inpaint(img, mask, inpaintRadius=1, flags=cv2.INPAINT_NS)
 
-            # 3. Chèn chữ mới sắc nét
+            # 3. Viết chữ ngày tháng mới
             img_rgb = cv2.cvtColor(inpainted, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
@@ -50,10 +52,9 @@ if uploaded_files and st.button("Xử lý ảnh"):
             except:
                 font = ImageFont.load_default()
 
-            # Viết dòng chữ màu trắng
             draw.text((crop_x + 2, crop_y + 2), new_date, fill=(255, 255, 255), font=font)
 
-            # Lưu vào bộ nhớ ZIP
+            # Lưu vào file ZIP
             out_img = io.BytesIO()
             pil_img.save(out_img, format="JPEG", quality=95)
             zip_file.writestr(f"edited_{uploaded_file.name}", out_img.getvalue())
