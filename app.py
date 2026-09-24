@@ -14,12 +14,12 @@ new_date = st.text_input("Ngày tháng năm mới mong muốn:", "2026/09/23 16:
 st.subheader("Cấu hình vị trí văn bản (Góc dưới bên trái)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=15)
-    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1400)
-    font_size = st.number_input("Kích thước chữ mới:", value=22)
+    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=12)
+    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1390)
+    font_size = st.number_input("Kích thước chữ mới:", value=40)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=240)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=28)
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=350)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=50)
 
 if uploaded_files and st.button("Xử lý ảnh"):
     zip_buffer = io.BytesIO()
