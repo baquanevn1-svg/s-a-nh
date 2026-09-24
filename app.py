@@ -4,9 +4,19 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import io
 import zipfile
+import urllib.request
 import os
 
 st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát")
+
+# 1. Tự động tải phông chữ nét mảnh chuẩn nếu chưa có sẵn
+FONT_FILE = "Roboto-Regular.ttf"
+if not os.path.exists(FONT_FILE):
+    try:
+        font_url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
+        urllib.request.urlretrieve(font_url, FONT_FILE)
+    except Exception:
+        pass
 
 uploaded_files = st.file_uploader("Tải lên danh sách ảnh (JPG, PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
@@ -15,12 +25,12 @@ new_date = st.text_input("Ngày tháng năm mới mong muốn:", "2026/09/23 16:
 st.subheader("Cấu hình vị trí văn bản (Góc dưới bên trái)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=10)
+    crop_x = st.number_input("Tọa độ X góc trái chữ:", value=15)
     crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=965)
-    font_size = st.number_input("Kích thước phông chữ:", value=15)
+    font_size = st.number_input("Kích thước phông chữ:", value=22)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=220)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=25)
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=250)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=30)
 
 if uploaded_files and st.button("Xử lý ảnh"):
     zip_buffer = io.BytesIO()
@@ -33,18 +43,9 @@ if uploaded_files and st.button("Xử lý ảnh"):
                 continue
             h, w, _ = img.shape
 
-            # Lấy vị trí vùng xóa (tự động điều chỉnh theo tỉ lệ kích thước ảnh gốc)
-            # Tỉ lệ tính theo ảnh mẫu chuẩn (1000x1000)
-            scale_ratio = h / 1000.0
-            actual_x = int(crop_x * scale_ratio)
-            actual_y = int(crop_y * scale_ratio)
-            actual_w = int(crop_w * scale_ratio)
-            actual_h = int(crop_h * scale_ratio)
-            actual_font_size = int(font_size * scale_ratio)
-
-            # 1. Tách nét chữ sáng màu
-            y1, y2 = max(0, actual_y), min(h, actual_y + actual_h)
-            x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
+            # Xử lý vùng xóa chữ cũ
+            y1, y2 = max(0, int(crop_y)), min(h, int(crop_y + crop_h))
+            x1, x2 = max(0, int(crop_x)), min(w, int(crop_x + crop_w))
             roi = img[y1:y2, x1:x2]
 
             if roi.size > 0:
@@ -57,35 +58,22 @@ if uploaded_files and st.button("Xử lý ảnh"):
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 2. Chuyển sang PIL để viết chữ chuẩn phông nét mảnh
+            # Viết chữ mới bằng Pillow với phông chữ Roboto
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
 
-            # Nạp font Sans-Serif chuẩn hệ thống Linux Server
-            font = None
-            font_paths = [
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "LiberationSans-Regular.ttf",
-                "DejaVuSans.ttf"
-            ]
-            for path in font_paths:
-                if os.path.exists(path):
-                    try:
-                        font = ImageFont.truetype(path, actual_font_size)
-                        break
-                    except:
-                        pass
-            
-            if font is None:
+            # Khởi tạo phông chữ
+            if os.path.exists(FONT_FILE):
+                font = ImageFont.truetype(FONT_FILE, int(font_size))
+            else:
                 font = ImageFont.load_default()
 
-            # Viết chữ màu trắng nét mảnh kèm bóng đổ nhẹ chuẩn như ảnh gốc
-            draw.text((actual_x + 1, actual_y + 1), new_date, fill=(50, 50, 50), font=font)
-            draw.text((actual_x, actual_y), new_date, fill=(255, 255, 255), font=font)
+            # Viết chữ màu trắng kèm viền đổ bóng nhẹ nét mảnh
+            draw.text((int(crop_x) + 1, int(crop_y) + 1), new_date, fill=(60, 60, 60), font=font)
+            draw.text((int(crop_x), int(crop_y)), new_date, fill=(255, 255, 255), font=font)
 
-            # Chuyển ngược lại để xuất file
+            # Lưu file ảnh
             final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
