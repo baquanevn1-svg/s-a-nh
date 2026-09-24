@@ -1,7 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import io
 import zipfile
 import os
@@ -65,11 +65,11 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"Khung đỏ xác định vị trí xử lý (Kích thước ảnh gốc: {p_w}x{p_h})", 
+            caption=f"Khung đỏ vị trí xử lý (Kích thước ảnh: {p_w}x{p_h})", 
             use_container_width=True
         )
 
-if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa sạch nét cũ 100%)"):
+if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xử lý đồng bộ nền ảnh sáng & tối)"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -89,25 +89,41 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa sạch nét 
             x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
             roi = img[y1:y2, x1:x2]
 
-            # 1. BƯỚC XÓA TRIỆT ĐỂ NÉT CHỮ CŨ VÀ BÓNG MỜ TUNG HOÀNH XUNG QUANH
+            # 1. BƯỚC XÓA CHỮ NGUYÊN BẢN (KHÔNG ĐỂ LẠI MẢNG HỘP XÁM CẮT NGANG)
             if roi.size > 0:
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                
-                # Quét rộng vùng chữ sáng & các viền mờ xung quanh chữ cũ
-                _, text_mask = cv2.threshold(gray_roi, 140, 255, cv2.THRESH_BINARY)
-                
-                # Phóng to vùng nét cần xóa thêm 2px để ôm hết bóng mờ chữ cũ
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4))
+                # Nhận diện chính xác nét chữ cũ
+                _, text_mask = cv2.threshold(gray_roi, 160, 255, cv2.THRESH_BINARY)
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                 text_mask = cv2.dilate(text_mask, kernel, iterations=1)
                 
-                # Khôi phục lại nền bằng thuật toán Inpaint mịn
-                cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+                # Trám lại bằng thuật toán Navier-Stokes giúp hòa tan đường biên
+                cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=2, flags=cv2.INPAINT_NS)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 2. VẼ CHỮ MỚI SẮC NÉT ĐỀU ĐẶN
+            # 2. XỬ LÝ LỚP NỀN MỜ GRADIENT ĐỒNG BỘ TỰ NHIÊN
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            pil_img = Image.fromarray(img_rgb)
-            draw = ImageDraw.Draw(pil_img)
+            base_pil = Image.fromarray(img_rgb).convert("RGBA")
+            
+            # Tạo lớp phủ mờ tự nhiên hòa quyện mềm mại (không bị góc vuông)
+            overlay_layer = Image.new("RGBA", base_pil.size, (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay_layer)
+
+            # Mở rộng vùng mờ ra rộng hơn để viền nhòe mịn vào ảnh gốc
+            pad_x1 = max(0, actual_x - 20)
+            pad_y1 = max(0, actual_y - 12)
+            pad_x2 = min(w, actual_x + actual_w + 40)
+            pad_y2 = min(h, actual_y + actual_h + 15)
+
+            # Phủ một lớp bóng mờ nhẹ 
+            overlay_draw.rectangle([pad_x1, pad_y1, pad_x2, pad_y2], fill=(0, 0, 0, 90))
+            
+            # Làm nhòe viền (Gaussian Blur) với bán kính lớn để triệt tiêu hoàn toàn góc cạnh
+            overlay_layer = overlay_layer.filter(ImageFilter.GaussianBlur(radius=18))
+
+            # 3. VẼ CHỮ MỚI
+            text_layer = Image.new("RGBA", base_pil.size, (0, 0, 0, 0))
+            text_draw = ImageDraw.Draw(text_layer)
 
             font = load_custom_font(int(font_size))
             if font is None:
@@ -116,26 +132,27 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Xóa sạch nét 
             y_line1 = actual_y + 4
             y_line2 = actual_y + 4 + int(line_spacing)
 
-            def draw_text_clean(draw_obj, pos, text_str, font_obj):
-                x, y = pos
-                # Viền đen mỏng 1px giúp chữ trắng nổi rõ trên mọi loại cảnh
-                for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, 1), (1, 0), (-1, 0), (0, -1)]:
-                    draw_obj.text((x + dx, y + dy), text_str, fill=(0, 0, 0), font=font_obj)
-                # Chữ màu trắng chuẩn
-                draw_obj.text((x, y), text_str, fill=(255, 255, 255), font=font_obj)
-
             if line1:
-                draw_text_clean(draw, (actual_x, y_line1), line1, font)
+                # Viền đen mỏng xung quanh nét chữ
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    text_draw.text((actual_x + dx, y_line1 + dy), line1, fill=(0, 0, 0, 220), font=font)
+                text_draw.text((actual_x, y_line1), line1, fill=(255, 255, 255, 255), font=font)
 
             if line2:
-                draw_text_clean(draw, (actual_x, y_line2), line2, font)
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    text_draw.text((actual_x + dx, y_line2 + dy), line2, fill=(0, 0, 0, 220), font=font)
+                text_draw.text((actual_x, y_line2), line2, fill=(255, 255, 255, 255), font=font)
+
+            # Ghép các lớp ảnh: Ảnh gốc -> Lớp mờ mịn mềm -> Dòng chữ trắng
+            final_pil = Image.alpha_composite(base_pil, overlay_layer)
+            final_pil = Image.alpha_composite(final_pil, text_layer).convert("RGB")
 
             # Xuất ảnh
-            final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            final_img = cv2.cvtColor(np.array(final_pil), cv2.COLOR_RGB2BGR)
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Đã xóa triệt để bóng chữ cũ và cập nhật cỡ chữ mới.")
+    st.success("✅ Đã xử lý xong! Cả ảnh trời sáng và ảnh nền tối đều đồng bộ tự nhiên.")
     st.download_button(
         label="📥 Tải về file ZIP tất cả ảnh đã xử lý",
         data=zip_buffer.getvalue(),
