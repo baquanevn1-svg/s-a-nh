@@ -1,13 +1,13 @@
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 import io
 import zipfile
 import os
 import urllib.request
 
-st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát")
+st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát (vTools Survey)")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -38,7 +38,7 @@ st.subheader("1. Nội dung thay thế")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 22 tháng 2 2026")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:52:23 GMT+07:00")
 
-st.subheader("2. Thông số vị trí (Đã giữ nguyên vị trí & cỡ chữ chuẩn)")
+st.subheader("2. Thông số vị trí (Giữ nguyên kích thước & vị trí đã chuẩn)")
 col1, col2 = st.columns(2)
 with col1:
     crop_x = st.number_input("Tọa độ X góc trái:", value=45)
@@ -48,6 +48,7 @@ with col1:
 with col2:
     crop_w = st.number_input("Chiều rộng vùng xóa:", value=380)
     crop_h = st.number_input("Chiều cao vùng xóa:", value=80)
+    bg_darkness = st.slider("Độ tối nền mờ phía sau (%):", min_value=20, max_value=80, value=40, help="Tùy chỉnh độ mờ đen phía sau để tiệp màu chuẩn với các dòng chữ ở trên")
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -65,11 +66,11 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"Khung đỏ xem trước vị trí xử lý (Kích thước ảnh: {p_w}x{p_h})", 
+            caption=f"Vùng khung đỏ xử lý nền & chữ mới (Kích thước ảnh gốc: {p_w}x{p_h})", 
             use_container_width=True
         )
 
-if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Khôi phục nền thật)"):
+if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Khôi phục nền đồng bộ)"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -90,19 +91,24 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Khôi phục nề
             roi = img[y1:y2, x1:x2]
 
             if roi.size > 0:
-                # 1. KHÔI PHÚC NỀN TỰ NHIÊN: Lọc chính xác các điểm ảnh chữ gốc (màu trắng/sáng)
+                # 1. BƯỚC XÓA NÉT CHỮ CŨ
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                _, text_mask = cv2.threshold(gray_roi, 175, 255, cv2.THRESH_BINARY)
-                
-                # Mở rộng nét chữ mỏng để xóa trọn vẹn nét gốc
+                _, text_mask = cv2.threshold(gray_roi, 160, 255, cv2.THRESH_BINARY)
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
                 text_mask = cv2.dilate(text_mask, kernel, iterations=1)
                 
-                # Phục hồi màu nền tự nhiên (không tạo mảng hình chữ nhật màu xám)
+                # Phục hồi ảnh nền gốc dưới chữ
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
-                img[y1:y2, x1:x2] = cleaned_roi
+                
+                # 2. TẠO LỚP NỀN MỜ TỐI ĐỒNG BỘ VỚI CÁC DÒNG CHỮ TRÊN
+                alpha = bg_darkness / 100.0
+                dark_overlay = np.zeros_like(cleaned_roi, dtype=np.uint8)
+                # Phủ lớp mờ màu đen tự nhiên
+                blended_roi = cv2.addWeighted(cleaned_roi, 1.0 - alpha, dark_overlay, alpha, 0)
+                
+                img[y1:y2, x1:x2] = blended_roi
 
-            # 2. VẼ CHỮ MỚI CHUẨN ĐỊNH DẠNG ẢNH KHẢO SÁT (Chữ trắng viền đen mảnh)
+            # 3. CHÈN CHỮ MỚI CHUẨN ĐỊNH DẠNG
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
@@ -114,13 +120,12 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Khôi phục nề
             y_line1 = actual_y + 6
             y_line2 = actual_y + 6 + int(line_spacing)
 
-            # Hàm vẽ chữ có viền đen mỏng xung quanh (Drop shadow nhẹ 4 hướng)
             def draw_text_with_shadow(draw_obj, pos, text_str, font_obj):
                 x, y = pos
-                # Vẽ viền mỏng đen xung quanh
+                # Bóng viền mảnh 4 góc
                 for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)]:
-                    draw_obj.text((x + dx, y + dy), text_str, fill=(0, 0, 0), font=font_obj)
-                # Vẽ chữ trắng chính giữa
+                    draw_obj.text((x + dx, y + dy), text_str, fill=(10, 10, 10), font=font_obj)
+                # Chữ chính màu trắng
                 draw_obj.text((x, y), text_str, fill=(255, 255, 255), font=font_obj)
 
             if line1:
@@ -134,7 +139,7 @@ if uploaded_files and st.button("🚀 Bắt đầu Thay Thế (Khôi phục nề
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý hoàn tất! Nền ảnh được khôi phục tự nhiên.")
+    st.success("✅ Đã xử lý hoàn tất! Nền mờ đã tiệp màu tự nhiên với các dòng trên.")
     st.download_button(
         label="📥 Tải về file ZIP tất cả ảnh đã xử lý",
         data=zip_buffer.getvalue(),
