@@ -38,19 +38,23 @@ st.subheader("1. Nội dung thay thế")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Bảy, 22 tháng 2 2026")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:52:23 GMT+07:00")
 
-st.subheader("2. Thông số vị trí (Đã chỉnh chuẩn cho ảnh 1080x1920)")
+st.subheader("2. Tùy chọn vị trí chèn chữ mới")
+text_position = st.radio("Chèn chữ mới ở vị trí nào?", ["Góc dưới bên trái (Thay vào chỗ cũ)", "Góc dưới bên phải"], index=0)
+
+st.subheader("3. Thông số vùng xóa (Đã chỉnh chuẩn cho 2 dòng cuối)")
 col1, col2 = st.columns(2)
 with col1:
-    crop_x = st.number_input("Tọa độ X góc trái:", value=55)
-    crop_y = st.number_input("Tọa độ Y góc trên:", value=1725)
+    crop_x = st.number_input("Tọa độ X góc trái vùng xóa:", value=55)
+    crop_y = st.number_input("Tọa độ Y góc trên vùng xóa:", value=1810)
     font_size = st.number_input("Kích thước phông chữ:", value=22)
     line_spacing = st.number_input("Khoảng cách 2 dòng:", value=28)
 with col2:
     crop_w = st.number_input("Chiều rộng vùng xóa:", value=360)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=65)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=70)
+    if text_position == "Góc dưới bên phải":
+        new_text_x = st.number_input("Tọa độ X chữ mới (Bên phải):", value=680)
 
 if uploaded_files:
-    # Hiển thị khung xem trước vị trí xóa trên ảnh đầu tiên
     first_file = uploaded_files[0]
     file_bytes = np.asarray(bytearray(first_file.read()), dtype=np.uint8)
     first_file.seek(0)
@@ -66,7 +70,7 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"Khung đỏ xem trước (Kích thước ảnh: {p_w}x{p_h})", 
+            caption=f"Khung đỏ xem trước vùng sẽ xóa (Kích thước ảnh: {p_w}x{p_h})", 
             use_container_width=True
         )
 
@@ -86,7 +90,7 @@ if uploaded_files and st.button("🚀 Bắt đầu Xử lý ảnh"):
             actual_w = int(crop_w)
             actual_h = int(crop_h)
 
-            # 1. Xóa vùng chữ cũ
+            # 1. Xóa sạch 2 dòng chữ cũ nhưng vẫn giữ nguyên nền cây/hàng rào phía sau
             y1, y2 = max(0, actual_y), min(h, actual_y + actual_h)
             x1, x2 = max(0, actual_x), min(w, actual_x + actual_w)
             roi = img[y1:y2, x1:x2]
@@ -97,7 +101,7 @@ if uploaded_files and st.button("🚀 Bắt đầu Xử lý ảnh"):
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 2. Vẽ 2 dòng chữ mới
+            # 2. Chuyển sang PIL vẽ chữ mới
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
@@ -106,16 +110,22 @@ if uploaded_files and st.button("🚀 Bắt đầu Xử lý ảnh"):
             if font is None:
                 font = ImageFont.load_default()
 
+            # Xác định vị trí ghi chữ mới
+            if text_position == "Góc dưới bên phải":
+                write_x = int(new_text_x)
+            else:
+                write_x = actual_x
+
             y_line1 = actual_y + 2
             y_line2 = actual_y + 2 + int(line_spacing)
 
             if line1:
-                draw.text((actual_x + 1, y_line1 + 1), line1, fill=(30, 30, 30), font=font)
-                draw.text((actual_x, y_line1), line1, fill=(255, 255, 255), font=font)
+                draw.text((write_x + 1, y_line1 + 1), line1, fill=(30, 30, 30), font=font)
+                draw.text((write_x, y_line1), line1, fill=(255, 255, 255), font=font)
 
             if line2:
-                draw.text((actual_x + 1, y_line2 + 1), line2, fill=(30, 30, 30), font=font)
-                draw.text((actual_x, y_line2), line2, fill=(255, 255, 255), font=font)
+                draw.text((write_x + 1, y_line2 + 1), line2, fill=(30, 30, 30), font=font)
+                draw.text((write_x, y_line2), line2, fill=(255, 255, 255), font=font)
 
             # Xuất file
             final_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
