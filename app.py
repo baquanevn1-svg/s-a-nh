@@ -4,8 +4,19 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import io
 import zipfile
+import urllib.request
+import os
 
 st.title("📷 Công cụ Sửa Ngày Tháng Ảnh Khảo Sát")
+
+# Tự động tải phông chữ chuẩn hỗ trợ đổi kích thước nếu chưa có
+FONT_PATH = "Roboto-Regular.ttf"
+if not os.path.exists(FONT_PATH):
+    try:
+        url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
+        urllib.request.urlretrieve(url, FONT_PATH)
+    except Exception as e:
+        pass
 
 uploaded_files = st.file_uploader("Tải lên danh sách ảnh (JPG, PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
@@ -15,8 +26,8 @@ st.subheader("Cấu hình vị trí văn bản (Góc dưới bên trái)")
 col1, col2 = st.columns(2)
 with col1:
     crop_x = st.number_input("Tọa độ X góc trái chữ:", value=12)
-    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1385)
-    font_size = st.number_input("Kích thước chữ mới:", value=38)
+    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1380)
+    font_size = st.number_input("Kích thước chữ mới:", value=32)
 with col2:
     crop_w = st.number_input("Chiều rộng vùng xóa:", value=320)
     crop_h = st.number_input("Chiều cao vùng xóa:", value=45)
@@ -49,23 +60,20 @@ if uploaded_files and st.button("Xử lý ảnh"):
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 3. Viết chữ ngày tháng mới có khả năng đổi size thật
+            # 3. Viết chữ ngày tháng mới
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
 
-            # Nạp phông chữ DejaVu Sans có sẵn trên Linux hỗ trợ đổi font_size
-            try:
-                font = ImageFont.truetype("DejaVuSans.ttf", font_size)
-            except:
-                try:
-                    font = ImageFont.truetype("LiberationSans-Regular.ttf", font_size)
-                except:
-                    font = ImageFont.load_default()
+            # Khởi tạo phông chữ Roboto
+            if os.path.exists(FONT_PATH):
+                font = ImageFont.truetype(FONT_PATH, int(font_size))
+            else:
+                font = ImageFont.load_default()
 
-            # Bổ sung bóng mờ nhẹ phía sau chữ để chữ nổi rõ trên nền gạch
-            draw.text((crop_x + 3, crop_y + 3), new_date, fill=(0, 0, 0), font=font)
-            draw.text((crop_x + 2, crop_y + 2), new_date, fill=(255, 255, 255), font=font)
+            # Viết chữ màu trắng kèm viền xám mỏng nhẹ để rõ nét trên nền gạch
+            draw.text((crop_x + 1, crop_y + 1), new_date, fill=(80, 80, 80), font=font)
+            draw.text((crop_x, crop_y), new_date, fill=(255, 255, 255), font=font)
 
             out_img = io.BytesIO()
             pil_img.save(out_img, format="JPEG", quality=98)
