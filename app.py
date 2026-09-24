@@ -15,11 +15,11 @@ st.subheader("Cấu hình vị trí văn bản (Góc dưới bên trái)")
 col1, col2 = st.columns(2)
 with col1:
     crop_x = st.number_input("Tọa độ X góc trái chữ:", value=12)
-    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1390)
-    font_size = st.number_input("Kích thước chữ mới:", value=40)
+    crop_y = st.number_input("Tọa độ Y góc trên chữ:", value=1385)
+    font_size = st.number_input("Kích thước chữ mới:", value=38)
 with col2:
-    crop_w = st.number_input("Chiều rộng vùng xóa:", value=350)
-    crop_h = st.number_input("Chiều cao vùng xóa:", value=50)
+    crop_w = st.number_input("Chiều rộng vùng xóa:", value=320)
+    crop_h = st.number_input("Chiều cao vùng xóa:", value=45)
 
 if uploaded_files and st.button("Xử lý ảnh"):
     zip_buffer = io.BytesIO()
@@ -38,31 +38,33 @@ if uploaded_files and st.button("Xử lý ảnh"):
             roi = img[y1:y2, x1:x2]
 
             if roi.size > 0:
-                # 1. Chuyển sang ảnh xám để tìm nét chữ màu sáng (trắng/xám)
+                # 1. Chuyển sang ảnh xám để tìm nét chữ màu sáng
                 gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                
-                # 2. Ngưỡng lọc lấy riêng nét chữ
                 _, text_mask = cv2.threshold(gray_roi, 170, 255, cv2.THRESH_BINARY)
                 
-                # Nở nhẹ mask 1 pixel để bao trọn viền chữ
                 kernel = np.ones((2, 2), np.uint8)
                 text_mask = cv2.dilate(text_mask, kernel, iterations=1)
 
-                # 3. Chỉ inpaint đúng các điểm ảnh thuộc nét chữ (không làm mờ mảng gạch xung quanh)
+                # 2. Xóa nét chữ mỏng bằng Inpaint
                 cleaned_roi = cv2.inpaint(roi, text_mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
                 img[y1:y2, x1:x2] = cleaned_roi
 
-            # 4. Viết chữ ngày tháng mới
+            # 3. Viết chữ ngày tháng mới có khả năng đổi size thật
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(img_rgb)
             draw = ImageDraw.Draw(pil_img)
 
+            # Nạp phông chữ DejaVu Sans có sẵn trên Linux hỗ trợ đổi font_size
             try:
-                font = ImageFont.truetype("arial.ttf", font_size)
+                font = ImageFont.truetype("DejaVuSans.ttf", font_size)
             except:
-                font = ImageFont.load_default()
+                try:
+                    font = ImageFont.truetype("LiberationSans-Regular.ttf", font_size)
+                except:
+                    font = ImageFont.load_default()
 
-            # Viết chữ trắng sắc nét
+            # Bổ sung bóng mờ nhẹ phía sau chữ để chữ nổi rõ trên nền gạch
+            draw.text((crop_x + 3, crop_y + 3), new_date, fill=(0, 0, 0), font=font)
             draw.text((crop_x + 2, crop_y + 2), new_date, fill=(255, 255, 255), font=font)
 
             out_img = io.BytesIO()
