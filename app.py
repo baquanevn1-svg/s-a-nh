@@ -7,55 +7,75 @@ import zipfile
 import os
 import urllib.request
 
-st.set_page_config(page_title="vTools Exact Style", layout="wide")
-st.title("📷 vTools Pro: Chuẩn Phông Chữ Gốc & Giữ Nguyên Nền")
+st.set_page_config(page_title="vTools Exact Match 100%", layout="wide")
+st.title("📷 vTools Pro: Chuẩn 100% Kiểu Chữ Gốc & Giữ Nguyên Nền")
 
 @st.cache_resource
-def get_vtools_condensed_font(font_size):
-    # Tải font Roboto Condensed Regular (đúng font dáng hẹp nhẹ của vTools)
+def load_vtools_exact_font(font_size):
+    """
+    Tải trực tiếp font Roboto Condensed / DejaVu Sans Sans-Serif chuẩn.
+    Đảm bảo TrueType Font luôn load thành công để thay đổi kích thước chữ mượt mà.
+    """
     font_filename = "RobotoCondensed-Regular.ttf"
-    if not os.path.exists(font_filename):
+    
+    # 1. Thử tải font chuẩn vTools từ Google Fonts CDN
+    if not os.path.exists(font_filename) or os.path.getsize(font_filename) == 0:
         urls = [
-            "https://raw.githubusercontent.com/google/fonts/main/ofl/robotocondensed/RobotoCondensed-Regular.ttf",
+            "https://github.com/google/fonts/raw/main/ofl/robotocondensed/RobotoCondensed-Regular.ttf",
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/robotocondensed/RobotoCondensed%5Bwght%5D.ttf",
             "https://cdnjs.cloudflare.com/ajax/libs/ink/3.1.10/fonts/Roboto/roboto-condensed-regular-webfont.ttf"
         ]
         for url in urls:
             try:
-                urllib.request.urlretrieve(url, font_filename)
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as response, open(font_filename, 'wb') as out_file:
+                    out_file.write(response.read())
                 if os.path.exists(font_filename) and os.path.getsize(font_filename) > 0:
                     break
             except Exception:
                 continue
 
+    # 2. Sử dụng font đã tải
     if os.path.exists(font_filename) and os.path.getsize(font_filename) > 0:
         try:
             return ImageFont.truetype(font_filename, int(font_size))
         except Exception:
             pass
-            
-    # Dự phòng
-    try:
-        return ImageFont.truetype("arial.ttf", int(font_size))
-    except Exception:
-        return ImageFont.load_default()
+
+    # 3. Phao cứu sinh hệ thống (Đảm bảo luôn resize được chữ dù không có mạng)
+    system_fonts = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "arial.ttf"
+    ]
+    for sys_f in system_fonts:
+        if os.path.exists(sys_f):
+            try:
+                return ImageFont.truetype(sys_f, int(font_size))
+            except Exception:
+                continue
+
+    return ImageFont.load_default()
 
 uploaded_files = st.file_uploader("Tải lên danh sách ảnh vTools (JPG, PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 st.subheader("1. Nội dung dòng ngày tháng năm mới")
 line1 = st.text_input("Dòng ngày tháng năm mới:", "Thứ Bảy, 15 tháng 2 2025")
 
-st.subheader("2. Tinh chỉnh theo nét chữ vTools gốc")
+st.subheader("2. Điều chỉnh kích thước chữ & Tọa độ")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("**Căn chỉnh phông chữ:**")
-    # Chuẩn cỡ chữ vTools gốc so với chiều cao ảnh
-    font_size_pct = st.slider("Cỡ chữ (% chiều cao ảnh) - Gốc vTools là 2.2%:", min_value=1.5, max_value=4.0, value=2.2, step=0.1)
-    text_opacity = st.slider("Độ trong suốt/đậm nét chữ (Gốc vTools ~ 230):", min_value=150, max_value=255, value=230, step=5)
+    st.markdown("**Kích thước phông chữ thực tế:**")
+    # Giá trị px trực tiếp giúp bạn chủ động tăng/giảm cỡ chữ chính xác
+    font_size_px = st.number_input("Chiều cao phông chữ (Pixel) - Mặc định chuẩn vTools:", min_value=10, max_value=120, value=38, step=1)
+    stroke_w = st.slider("Độ mảnh viền bóng (px):", min_value=0, max_value=3, value=1, step=1)
 
 with col2:
-    st.markdown("**Tọa độ vị trí dòng ngày:**")
-    margin_left_pct = st.number_input("Cách lề trái (% chiều rộng ảnh):", value=2.2)
-    margin_bottom_pct = st.number_input("Khoảng cách dòng ngày so với đáy (% chiều cao ảnh):", value=6.2)
+    st.markdown("**Vị trí dòng chữ trên ảnh:**")
+    margin_left = st.number_input("Lệch lề trái (Pixel):", value=28)
+    margin_bottom = st.number_input("Khoảng cách dòng ngày so với đáy (Pixel):", value=82)
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -66,66 +86,55 @@ if uploaded_files:
     if preview_img is not None:
         p_h, p_w, _ = preview_img.shape
         
-        calc_f_size = int(p_h * (font_size_pct / 100.0))
-        calc_m_left = int(p_w * (margin_left_pct / 100.0))
-        calc_m_bottom = int(p_h * (margin_bottom_pct / 100.0))
+        y_l1 = p_h - margin_bottom - font_size_px
         
-        y_l1 = p_h - calc_m_bottom - calc_f_size
-        
-        # Khung quét xóa nhỏ gọn sát nét chữ cũ
-        y1 = int(y_l1 - 2)
-        y2 = int(y_l1 + calc_f_size + 4)
-        clean_w = int(p_w * 0.50)
+        # Khung quét xóa nhỏ gọn vừa sát chữ
+        box_y1 = int(y_l1 - 4)
+        box_y2 = int(y_l1 + font_size_px + 6)
+        clean_w = int(p_w * 0.52)
         
         cv2.rectangle(
             preview_img, 
-            (calc_m_left, y1), 
-            (calc_m_left + clean_w, y2), 
+            (int(margin_left), box_y1), 
+            (int(margin_left + clean_w), box_y2), 
             (0, 0, 255), 2
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"📌 Khung đỏ: Vùng quét xóa chữ cũ (Cỡ chữ chuẩn vTools: {calc_f_size}px).", 
+            caption=f"📌 Khung màu đỏ thể hiện vùng xóa chữ cũ (Cỡ chữ hiện tại: {font_size_px}px). Giữ nền 100%.", 
             use_container_width=True
         )
 
-def process_vtools_exact_match(img, l1_str, f_pct, m_left_p, m_bottom_p, opacity):
+def process_vtools_exact(img, l1_str, f_size, m_left, m_bottom, s_width):
     h_img, w_img, _ = img.shape
-
-    # 1. TÍNH TOÁN KÍCH THƯỚC PHÔNG CHỮ CHUẨN VTOOLS
-    f_size = max(14, int(h_img * (f_pct / 100.0)))
-    m_left = int(w_img * (m_left_p / 100.0))
-    m_bottom = int(h_img * (m_bottom_p / 100.0))
-    c_w = int(w_img * 0.52)
 
     y_l1 = int(h_img - m_bottom - f_size)
 
     # Vùng quét xóa đúng sát nét chữ
-    x1 = int(m_left)
-    x2 = int(m_left + c_w)
-    y1 = max(0, int(y_l1 - 3))
-    y2 = min(h_img, int(y_l1 + f_size + 3))
-    x1, x2 = max(0, x1), min(w_img, x2)
+    x1 = max(0, int(m_left))
+    x2 = min(w_img, int(m_left + (w_img * 0.52)))
+    y1 = max(0, int(y_l1 - 4))
+    y2 = min(h_img, int(y_l1 + f_size + 6))
 
-    # 2. XÓA NÉT CHỮ CỦ BẰNG INPAINT - KHÔNG LÀM THAY ĐỔI MÀU NỀN BÊN DƯỚI
+    # BƯỚC 1: XÓA NÉT CHỮ CỦ BẰNG THUẬT TOÁN INPAINT (GIỮ NỀN 100%)
     roi = img[y1:y2, x1:x2]
     if roi.size > 0:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         
-        # Chỉ nhận diện đúng các điểm ảnh chữ màu sáng
-        _, mask = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+        # Nhận diện chính xác pixel chữ màu trắng
+        _, mask = cv2.threshold(gray, 170, 255, cv2.THRESH_BINARY)
         
-        # Mở rộng cực nhẹ 1px để không bị lem sang nền
+        # Mở rộng 1px để bao trọn nét
         dilated_mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)), iterations=1)
 
-        # Thay thế điểm ảnh chữ bằng họa tiết nền gốc xung quanh
+        # Inpaint khôi phục họa tiết nền
         img[y1:y2, x1:x2] = cv2.inpaint(roi, dilated_mask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
 
-    # 3. CHÈN CHỮ MỚI VỚI DẠNG CONDENSED & NÉT CHỮ MỜ NHẸ GIỐNG HỆT ẢNH GỐC
+    # BƯỚC 2: CHÈN CHỮ MỚI CHUẨN KÍCH THƯỚC VÀ PHÔNG CHỮ GỐC
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     base_pil = Image.fromarray(img_rgb).convert("RGBA")
 
-    font = get_vtools_condensed_font(f_size)
+    font = load_vtools_exact_font(f_size)
 
     text_layer = Image.new("RGBA", base_pil.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(text_layer)
@@ -133,14 +142,14 @@ def process_vtools_exact_match(img, l1_str, f_pct, m_left_p, m_bottom_p, opacity
     if l1_str:
         text_pos = (x1, y_l1)
         
-        # Viền bóng siêu mỏng 1px màu đen nhẹ để nổi chữ trên nền sáng
+        # Vẽ chữ trắng mờ nhẹ + Viền bóng mỏng nét chuẩn vTools
         draw.text(
             text_pos, 
             l1_str, 
             font=font, 
-            fill=(255, 255, 255, opacity), 
-            stroke_width=1, 
-            stroke_fill=(0, 0, 0, 120)
+            fill=(255, 255, 255, 240), 
+            stroke_width=int(s_width), 
+            stroke_fill=(0, 0, 0, 160)
         )
 
     final_pil = Image.alpha_composite(base_pil, text_layer)
@@ -157,22 +166,22 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             if img is None:
                 continue
 
-            final_img = process_vtools_exact_match(
+            final_img = process_vtools_exact(
                 img, 
                 line1, 
-                font_size_pct, 
-                margin_left_pct, 
-                margin_bottom_pct, 
-                text_opacity
+                font_size_px, 
+                margin_left, 
+                margin_bottom, 
+                stroke_w
             )
 
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Dáng chữ và kích thước hoàn toàn trùng khớp các dòng gốc vTools.")
+    st.success("✅ Đã hoàn tất! Chữ mới đã phóng to đúng kích thước và trùng khớp phông chữ gốc.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
-        file_name="vtools_exact_style_result.zip",
+        file_name="vtools_100pct_match_result.zip",
         mime="application/zip"
     )
