@@ -7,8 +7,8 @@ import zipfile
 import os
 import urllib.request
 
-st.set_page_config(page_title="vTools Watermark Remover Natural Structure", layout="wide")
-st.title("📷 vTools Pro: Xóa Sạch Chữ & Giữ Nguyên Cảnh Vật Phía Sau")
+st.set_page_config(page_title="vTools Watermark Remover Clean Background", layout="wide")
+st.title("📷 vTools Pro: Xóa Chữ & Làm Rõ Cảnh Phía Sau (Loại Bỏ Nền Mờ)")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -39,7 +39,7 @@ st.subheader("1. Nội dung thay thế góc phải")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Sáu, 22 tháng 8 2025")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:15:37 GMT+07:00")
 
-st.subheader("2. Thông số vùng xử lý (Giữ nguyên chuẩn của bạn)")
+st.subheader("2. Thông số vùng xử lý (Giữ nguyên theo chuẩn của bạn)")
 col1, col2 = st.columns(2)
 with col1:
     st.markdown("**Khung khoanh vùng chứa chữ bên trái:**")
@@ -81,13 +81,14 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption="📌 Khung đỏ khoanh vùng chứa chữ (Thuật toán sẽ giữ nguyên chi tiết cảnh vật bên dưới).", 
+            caption="📌 Xem trước tọa độ chọn vùng.", 
             use_container_width=True
         )
 
-def remove_text_keep_background_structure(img, cx, cy, cw, ch):
+def remove_text_and_unblur_background(img, cx, cy, cw, ch):
     """
-    Xóa sạch 100% nét chữ nhưng giữ nguyên 100% đường nét chi tiết cảnh vật phía sau.
+    1. Xóa sạch 100% chữ.
+    2. Loại bỏ bóng đen mờ đè lên cảnh vật, khôi phục độ sáng & nét thật của cảnh phía sau.
     """
     h_img, w_img, _ = img.shape
     x1, x2 = max(0, int(cx)), min(w_img, int(cx + cw))
@@ -99,36 +100,48 @@ def remove_text_keep_background_structure(img, cx, cy, cw, ch):
 
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-    # 1. Nhận diện chính xác pixel chữ trắng và quầng mờ viền chữ
-    _, mask_white = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY)
-    
-    # Lọc viền chữ bằng Sobel
+    # 1. Bắt nét chữ trắng
+    _, mask_white = cv2.threshold(gray, 135, 255, cv2.THRESH_BINARY)
     grad_x = cv2.Sobel(gray, cv2.CV_8U, 1, 0, ksize=3)
     grad_y = cv2.Sobel(gray, cv2.CV_8U, 0, 1, ksize=3)
     grad = cv2.addWeighted(grad_x, 0.5, grad_y, 0.5, 0)
-    _, mask_grad = cv2.threshold(grad, 18, 255, cv2.THRESH_BINARY)
+    _, mask_grad = cv2.threshold(grad, 15, 255, cv2.THRESH_BINARY)
 
-    # Gộp mặt nạ nét chữ
     letter_mask = cv2.bitwise_or(mask_white, mask_grad)
-
-    # 2. Nở nhẹ mặt nạ 3x3 để ôm hết quầng bóng mờ nhưng KHÔNG lấn sang cảnh vật xung quanh
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dilated_mask = cv2.dilate(letter_mask, kernel, iterations=2)
 
-    # 3. Phục hồi dòng chảy cấu trúc liên tục (Navier-Stokes) - Giúp bảo toàn sóng tôn, ống nước, cột điện
+    # 2. Xóa chữ giữ cấu trúc
     cleaned_roi = cv2.inpaint(roi, dilated_mask, inpaintRadius=3, flags=cv2.INPAINT_NS)
 
-    # Ghép lại vào ảnh gốc
-    img[y1:y2, x1:x2] = cleaned_roi
+    # 3. Tăng độ tương phản & làm sáng vùng bị mờ xám (Khôi phục cảnh thật)
+    lab = cv2.cvtColor(cleaned_roi, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+
+    # Cân bằng độ sáng kênh L (Lightness)
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    cl = clahe.apply(l_channel)
+
+    limg = cv2.merge((cl, a_channel, b_channel))
+    enhanced_roi = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+
+    # Tăng độ sắc nét cho các đường nét cảnh vật (sóng tôn, cột điện)
+    sharpen_kernel = np.array([[0, -0.5, 0], [-0.5, 3.0, -0.5], [0, -0.5, 0]])
+    sharpened_roi = cv2.filter2D(enhanced_roi, -1, sharpen_kernel)
+
+    # Trộn nhẹ để cảnh trong trẻo tự nhiên
+    final_roi = cv2.addWeighted(cleaned_roi, 0.3, sharpened_roi, 0.7, 0)
+
+    img[y1:y2, x1:x2] = final_roi
     return img
 
-def process_vtools_natural(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacing, m_right, m_bottom):
+def process_vtools_clear(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacing, m_right, m_bottom):
     h_img, w_img, _ = img.shape
 
-    # 1. Xóa chữ bảo toàn cảnh vật
-    img = remove_text_keep_background_structure(img, cx, cy, cw, ch)
+    # 1. Xóa chữ & loại bỏ bóng mờ xám
+    img = remove_text_and_unblur_background(img, cx, cy, cw, ch)
 
-    # 2. Tạo chữ mới góc phải
+    # 2. Vẽ chữ mới
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb).convert("RGBA")
 
@@ -147,7 +160,7 @@ def process_vtools_natural(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacin
     y_l2 = int(h_img - m_bottom - f_size)
     y_l1 = int(y_l2 - l_spacing)
 
-    # Bóng chữ mới
+    # Bóng chữ
     shadow_layer = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
     draw_shadow = ImageDraw.Draw(shadow_layer)
 
@@ -183,7 +196,7 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             if img is None:
                 continue
 
-            final_img = process_vtools_natural(
+            final_img = process_vtools_clear(
                 img, 
                 clean_x, 
                 clean_y, 
@@ -200,10 +213,10 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Chữ được xóa sạch và cảnh vật phía sau hoàn toàn tự nhiên.")
+    st.success("✅ Đã xử lý xong! Lớp nền mờ đã được xóa bỏ, cảnh phía sau hiện rõ nét hoàn toàn.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
-        file_name="vtools_xoa_sach_giu_canh.zip",
+        file_name="vtools_canh_ro_net.zip",
         mime="application/zip"
     )
