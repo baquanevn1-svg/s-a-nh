@@ -7,12 +7,12 @@ import zipfile
 import os
 import urllib.request
 
-st.set_page_config(page_title="vTools Exact Font Match", layout="wide")
-st.title("📷 vTools Pro: Chuẩn Kiểu Chữ Nguyên Mẫu 100% (Giữ Nền Gốc)")
+st.set_page_config(page_title="vTools Auto Font Scale", layout="wide")
+st.title("📷 vTools Pro: Tự Động Tỷ Lệ Kích Thước Chữ (Không Bị Nhỏ Xíu)")
 
 @st.cache_resource
 def load_vtools_font(font_size):
-    # Tải đúng font Roboto Condensed (Dạng phông chữ cô đọng chuẩn của vTools)
+    # Tải phông chữ Roboto Condensed chuẩn nguyên mẫu vTools
     font_filename = "RobotoCondensed-Regular.ttf"
     if not os.path.exists(font_filename):
         urls = [
@@ -39,18 +39,18 @@ uploaded_files = st.file_uploader("Tải lên danh sách ảnh vTools (JPG, PNG)
 st.subheader("1. Nội dung dòng ngày tháng năm mới")
 line1 = st.text_input("Dòng ngày tháng năm mới:", "Thứ Bảy, 15 tháng 2 2025")
 
-st.subheader("2. Tinh chỉnh phông chữ nguyên mẫu vTools")
+st.subheader("2. Điều chỉnh kích thước & Vị trí chữ")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("**Vị trí chữ:**")
-    margin_left = st.number_input("Cách lề trái (px):", value=25)
-    margin_bottom = st.number_input("Khoảng cách dòng ngày so với đáy (px):", value=78)
+    st.markdown("**Căn chỉnh tỷ lệ phông chữ:**")
+    # Tỷ lệ phần trăm phông chữ so với chiều cao ảnh (mặc định ~2.3% giúp chữ vừa vặn như gốc)
+    font_scale_pct = st.slider("Tỷ lệ kích thước chữ (% chiều cao ảnh):", min_value=1.0, max_value=5.0, value=2.3, step=0.1)
+    stroke_scale_pct = st.slider("Độ dày viền bóng đen ôm chữ:", min_value=1, max_value=4, value=2, step=1)
 
 with col2:
-    st.markdown("**Thông số kiểu chữ chuẩn:**")
-    font_size = st.number_input("Kích thước chữ (px):", value=29)
-    stroke_width = st.slider("Độ dày viền bóng đen ôm chữ (px):", min_value=1, max_value=3, value=1, step=1)
-    clean_w = st.number_input("Chiều rộng vùng quét xóa chữ cũ (px):", value=460)
+    st.markdown("**Vị trí dòng ngày tháng năm:**")
+    margin_left_pct = st.number_input("Cách lề trái (% chiều rộng ảnh):", value=2.5)
+    margin_bottom_pct = st.number_input("Khoảng cách dòng ngày so với đáy (% chiều cao ảnh):", value=6.5)
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -60,37 +60,49 @@ if uploaded_files:
     
     if preview_img is not None:
         p_h, p_w, _ = preview_img.shape
-        y_l1 = p_h - margin_bottom - font_size
-        box_y1 = int(y_l1 - 8)
-        box_y2 = int(y_l1 + font_size + 8)
+        
+        # Tính toán thông số kích thước thực tế dựa trên độ phân giải ảnh
+        calc_font_size = int(p_h * (font_scale_pct / 100.0))
+        calc_m_left = int(p_w * (margin_left_pct / 100.0))
+        calc_m_bottom = int(p_h * (margin_bottom_pct / 100.0))
+        
+        y_l1 = p_h - calc_m_bottom - calc_font_size
+        box_y1 = int(y_l1 - 10)
+        box_y2 = int(y_l1 + calc_font_size + 10)
+        clean_w = int(p_w * 0.45) # Quét 45% chiều rộng ảnh
         
         cv2.rectangle(
             preview_img, 
-            (int(margin_left), box_y1), 
-            (int(margin_left + clean_w), box_y2), 
+            (calc_m_left, box_y1), 
+            (calc_m_left + clean_w, box_y2), 
             (0, 0, 255), 2
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption="📌 Vùng đỏ: Chỉ xóa nét chữ ngày tháng cũ, nền ảnh và dòng giờ gốc được giữ nguyên.", 
+            caption=f"📌 Xem trước: Kích thước phông chữ tự tính toán là {calc_font_size}px (Khung đỏ thể hiện vùng xóa dòng ngày tháng cũ).", 
             use_container_width=True
         )
 
-def process_vtools_exact_match(img, l1_str, f_size, m_left, m_bottom, c_w, s_width):
+def process_vtools_auto_scale(img, l1_str, f_scale, m_left_p, m_bottom_p, s_width):
     h_img, w_img, _ = img.shape
 
-    # Tọa độ dòng ngày tháng năm
+    # Tự động tính toán kích thước pixel theo độ phân giải của từng tấm ảnh
+    f_size = max(12, int(h_img * (f_scale / 100.0)))
+    m_left = int(w_img * (m_left_p / 100.0))
+    m_bottom = int(h_img * (m_bottom_p / 100.0))
+    c_w = int(w_img * 0.48)
+
     y_l1 = int(h_img - m_bottom - f_size)
 
     x1 = int(m_left)
     x2 = int(m_left + c_w)
-    y1 = int(y_l1 - 10)
-    y2 = int(y_l1 + f_size + 10)
+    y1 = int(y_l1 - int(f_size * 0.3))
+    y2 = int(y_l1 + f_size + int(f_size * 0.3))
 
     x1, x2 = max(0, x1), min(w_img, x2)
     y1, y2 = max(0, y1), min(h_img, y2)
 
-    # BƯỚC 1: XÓA TẨY NẾT CHỮ CŨ (GIỮ NỀN TỰ NHIÊN)
+    # BƯỚC 1: XÓA SẠCH DÒNG CHỮ NGÀY THÁNG CỦ (GIỮ NỀN NGUYÊN BẢN)
     roi = img[y1:y2, x1:x2]
     if roi.size > 0:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -103,10 +115,9 @@ def process_vtools_exact_match(img, l1_str, f_size, m_left, m_bottom, c_w, s_wid
         combined_mask = cv2.bitwise_or(mask1, mask2)
         dilated_mask = cv2.dilate(combined_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2)), iterations=1)
 
-        # Inpaint khôi phục nền gốc
         img[y1:y2, x1:x2] = cv2.inpaint(roi, dilated_mask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
 
-    # BƯỚC 2: IN CHỮ MỚI VỚI FONT & VIỀN BÓNG ĐEN NGUYÊN MẪU vTools
+    # BƯỚC 2: IN DÒNG NGÀY THÁNG MỚI VỚI TỶ LỆ CHUẨN ĐẸP
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     base_pil = Image.fromarray(img_rgb).convert("RGBA")
 
@@ -116,17 +127,16 @@ def process_vtools_exact_match(img, l1_str, f_size, m_left, m_bottom, c_w, s_wid
     draw = ImageDraw.Draw(text_layer)
 
     if l1_str:
-        # Tọa độ in chữ
         text_pos = (x1, y_l1)
         
-        # In viền bóng đen mỏng bao quanh chữ (stroke) chuẩn vTools gốc
+        # Viền bóng đen tỷ lệ theo kích thước chữ
         draw.text(
             text_pos, 
             l1_str, 
             font=font, 
             fill=(255, 255, 255, 255), 
             stroke_width=int(s_width), 
-            stroke_fill=(0, 0, 0, 200)
+            stroke_fill=(0, 0, 0, 220)
         )
 
     final_pil = Image.alpha_composite(base_pil, text_layer)
@@ -143,23 +153,22 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             if img is None:
                 continue
 
-            final_img = process_vtools_exact_match(
+            final_img = process_vtools_auto_scale(
                 img, 
                 line1, 
-                font_size, 
-                margin_left, 
-                margin_bottom,
-                clean_w,
-                stroke_width
+                font_scale_pct, 
+                margin_left_pct, 
+                margin_bottom_pct, 
+                stroke_scale_pct
             )
 
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã hoàn tất! Phông chữ & hiệu ứng viền bóng đen trùng khớp 100% với chữ vTools gốc.")
+    st.success("✅ Đã hoàn tất! Kích thước chữ tự động căn chỉnh đồng đều và vừa vặn trên mọi bức ảnh.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
-        file_name="vtools_exact_match_result.zip",
+        file_name="vtools_auto_scale_result.zip",
         mime="application/zip"
     )
