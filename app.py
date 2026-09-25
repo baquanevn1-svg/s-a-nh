@@ -7,8 +7,8 @@ import zipfile
 import os
 import urllib.request
 
-st.set_page_config(page_title="vTools Watermark Editor Soft Overlay", layout="wide")
-st.title("📷 vTools Pro: Sửa Chữ & Làm Mờ Mảng Xám Nền")
+st.set_page_config(page_title="vTools Watermark Editor Sharp Text", layout="wide")
+st.title("📷 vTools Pro: Mảng Xám Mờ Nhẹ & Chữ Trắng Sắc Nét")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -39,20 +39,20 @@ st.subheader("1. Nội dung 2 dòng cuối cần thay thế")
 line1 = st.text_input("Dòng áp chót (Thứ, ngày tháng năm):", "Thứ Bảy, 15 tháng 2 2025")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:28:23 GMT+07:00")
 
-st.subheader("2. Tùy chỉnh độ mờ mảng xám & Tọa độ")
+st.subheader("2. Tùy chỉnh độ mờ mảng xám & Vị trí chữ")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("**Độ đục mảng xám nền (Gợi ý: 0.10 - 0.20 để mảng xám mờ nhẹ tự nhiên):**")
-    shadow_opacity = st.slider("Độ đậm mảng xám (Opacity):", min_value=0.0, max_value=0.5, value=0.15, step=0.01)
+    st.markdown("**Mảng xám nền (Gợi ý: 0.10 để mảng xám cực mờ, thấy rõ cảnh vật):**")
+    shadow_opacity = st.slider("Độ đục mảng xám nền:", min_value=0.0, max_value=0.4, value=0.10, step=0.01)
     
-    st.markdown("**Vùng xử lý:**")
+    st.markdown("**Vùng xóa chữ cũ:**")
     clean_x = st.number_input("Tọa độ X (Góc trái):", value=20)
     clean_y = st.number_input("Tọa độ Y (Sát dưới Hướng chụp):", value=1350)
     clean_w = st.number_input("Chiều rộng vùng che (px):", value=450)
     clean_h = st.number_input("Chiều cao vùng che (px):", value=120)
 
 with col2:
-    st.markdown("**Định dạng chữ vTools:**")
+    st.markdown("**Định dạng chữ vTools sắc nét:**")
     font_size = st.number_input("Kích thước phông chữ (px):", value=28)
     line_spacing = st.number_input("Khoảng cách giữa 2 dòng (px):", value=36)
     text_offset_x = st.number_input("Thụt lề chữ X (px):", value=25)
@@ -66,7 +66,6 @@ if uploaded_files:
     
     if preview_img is not None:
         p_h, p_w, _ = preview_img.shape
-        # Khung đỏ xem trước vùng khoanh
         cv2.rectangle(
             preview_img, 
             (int(clean_x), int(clean_y)), 
@@ -75,14 +74,15 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption="📌 Khung đỏ khoanh vùng xử lý 2 dòng cuối.", 
+            caption="📌 Khung đỏ khoanh vùng xử lý.", 
             use_container_width=True
         )
 
-def process_vtools_ultra_soft(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacing, tx, ty, opacity):
+def process_vtools_sharp_text(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacing, tx, ty, opacity):
     """
-    Xóa dòng chữ cũ và hòa trộn lớp xám mờ cực nhẹ (Ultra-soft Alpha Overlay),
-    giúp mảng xám mờ đi rõ rệt và hiển thị cảnh vật đằng sau tự nhiên.
+    1. Xóa chữ cũ bằng Inpainting.
+    2. Phủ mảng xám mờ mỏng trên ảnh nền.
+    3. Vẽ chữ mới nét căng 100% ở lớp riêng trên cùng.
     """
     h_img, w_img, _ = img.shape
     x1, x2 = max(0, int(cx)), min(w_img, int(cx + cw))
@@ -92,30 +92,30 @@ def process_vtools_ultra_soft(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spa
     if roi.size == 0:
         return img
 
-    # 1. Xóa nét chữ cũ nhẹ nhàng bằng Inpainting để loại bỏ hoàn toàn chữ cũ
+    # BƯỚC 1: Xóa sạch 100% nét chữ cũ
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    _, mask_white = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    _, mask_white = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dilated_mask = cv2.dilate(mask_white, kernel, iterations=1)
     
     cleaned_roi = cv2.inpaint(roi, dilated_mask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
     img[y1:y2, x1:x2] = cleaned_roi
 
-    # 2. Tạo mảng xám siêu nhẹ (Ultra-transparent Soft Mask)
-    overlay = img.copy()
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 0), -1)
+    # BƯỚC 2: Phủ mảng xám mờ rất mỏng (Chỉ tác động lên nền)
+    if opacity > 0:
+        overlay = img.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 0), -1)
 
-    # Làm mượt viền xung quanh mảng xám bằng Gaussian Blur lớn
-    mask = np.zeros((h_img, w_img), dtype=np.float32)
-    mask[y1:y2, x1:x2] = opacity
-    mask = cv2.GaussianBlur(mask, (31, 31), 0)
-    mask_3ch = cv2.merge([mask, mask, mask])
+        mask = np.zeros((h_img, w_img), dtype=np.float32)
+        mask[y1:y2, x1:x2] = opacity
+        mask = cv2.GaussianBlur(mask, (25, 25), 0)
+        mask_3ch = cv2.merge([mask, mask, mask])
 
-    img_blended = (overlay.astype(np.float32) * mask_3ch + img.astype(np.float32) * (1.0 - mask_3ch))
-    img_result = np.clip(img_blended, 0, 255).astype(np.uint8)
+        img_blended = (overlay.astype(np.float32) * mask_3ch + img.astype(np.float32) * (1.0 - mask_3ch))
+        img = np.clip(img_blended, 0, 255).astype(np.uint8)
 
-    # 3. Chèn 2 dòng chữ mới nét và rõ ràng
-    img_rgb = cv2.cvtColor(img_result, cv2.COLOR_BGR2RGB)
+    # BƯỚC 3: Vẽ chữ mới ở lớp trên cùng - Đảm bảo nét 100% không bị mờ
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb).convert("RGBA")
 
     font = load_custom_font(int(f_size))
@@ -125,18 +125,16 @@ def process_vtools_ultra_soft(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spa
     y_line1 = int(ty)
     y_line2 = int(ty + l_spacing)
 
-    # Viền bóng chữ thanh mảnh giúp chữ trắng dễ đọc trên nền xám siêu mỏng
+    # Viền bóng đổ đen sắc (Shadow Layer) giúp nổi chữ trắng
     shadow_layer = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
     draw_shadow = ImageDraw.Draw(shadow_layer)
 
     if l1_str:
-        draw_shadow.text((int(tx) + 1, y_line1 + 1), l1_str, fill=(0, 0, 0, 180), font=font)
+        draw_shadow.text((int(tx) + 1, y_line1 + 1), l1_str, fill=(0, 0, 0, 230), font=font)
     if l2_str:
-        draw_shadow.text((int(tx) + 1, y_line2 + 1), l2_str, fill=(0, 0, 0, 180), font=font)
+        draw_shadow.text((int(tx) + 1, y_line2 + 1), l2_str, fill=(0, 0, 0, 230), font=font)
 
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=0.5))
-
-    # Lớp chữ trắng chuẩn vTools
+    # Lớp chữ trắng siêu nét (Pure White Layer)
     text_layer = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
     draw_text = ImageDraw.Draw(text_layer)
 
@@ -145,6 +143,7 @@ def process_vtools_ultra_soft(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spa
     if l2_str:
         draw_text.text((int(tx), y_line2), l2_str, fill=(255, 255, 255, 255), font=font)
 
+    # Ghép 3 lớp: Ảnh nền mờ -> Bóng chữ -> Chữ trắng
     composed = Image.alpha_composite(pil_img, shadow_layer)
     composed = Image.alpha_composite(composed, text_layer)
 
@@ -161,7 +160,7 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             if img is None:
                 continue
 
-            final_img = process_vtools_ultra_soft(
+            final_img = process_vtools_sharp_text(
                 img, 
                 clean_x, 
                 clean_y, 
@@ -179,10 +178,10 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Mảng xám đã mờ đi nhiều, cảnh phía sau hiện rõ rất tự nhiên.")
+    st.success("✅ Đã xử lý xong! Mảng xám nền mờ nhẹ tự nhiên, chữ trắng rõ nét 100%.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
-        file_name="vtools_mang_xam_mo_nhat.zip",
+        file_name="vtools_canh_ro_chu_sac_net.zip",
         mime="application/zip"
     )
