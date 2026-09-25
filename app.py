@@ -7,8 +7,8 @@ import zipfile
 import os
 import urllib.request
 
-st.set_page_config(page_title="vTools Watermark Auto Align", layout="wide")
-st.title("📷 vTools Pro: Định Vị 2 Dòng Cuối Sát Lề Dưới & Chỉnh Màn Mờ")
+st.set_page_config(page_title="vTools Text Outline Edition", layout="wide")
+st.title("📷 vTools Pro: Giữ Nền Tự Nhiên 100% & Tạo Viền Nổi Chữ")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -39,21 +39,19 @@ st.subheader("1. Nội dung 2 dòng cuối cần thay thế")
 line1 = st.text_input("Dòng áp chót (Thứ, ngày tháng năm):", "Thứ Bảy, 15 tháng 2 2025")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:28:23 GMT+07:00")
 
-st.subheader("2. Tùy chỉnh độ mờ màn xám & Căn chỉnh vị trí sát đáy")
+st.subheader("2. Căn chỉnh vị trí chữ & Độ đậm viền bóng")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("**Độ đục mảng xám (Màn mờ che nền phía sau):**")
-    shadow_opacity = st.slider("Độ đậm mảng xám nền (Tăng lên để mờ hơn):", min_value=0.0, max_value=0.8, value=0.45, step=0.05)
-    
-    st.markdown("**Khoảng cách căn chỉnh tính từ lề dưới ảnh:**")
+    st.markdown("**Vị trí tính từ lề đáy ảnh:**")
     margin_bottom = st.number_input("Cách lề đáy ảnh (px):", value=45)
     margin_left = st.number_input("Cách lề trái (px):", value=25)
+    shadow_radius = st.slider("Độ tỏa bóng viền chữ (px):", min_value=1, max_value=5, value=2)
 
 with col2:
-    st.markdown("**Định dạng chữ vTools:**")
+    st.markdown("**Định dạng phông chữ vTools:**")
     font_size = st.number_input("Kích thước phông chữ (px):", value=28)
     line_spacing = st.number_input("Khoảng cách giữa 2 dòng (px):", value=34)
-    clean_w = st.number_input("Chiều rộng mảng mờ (px):", value=460)
+    clean_w = st.number_input("Chiều rộng vùng xóa chữ cũ (px):", value=460)
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -64,14 +62,12 @@ if uploaded_files:
     if preview_img is not None:
         p_h, p_w, _ = preview_img.shape
         
-        # Tọa độ tự động tính từ lề dưới lên để không bao giờ bị nhảy lên trên
         y_l2 = p_h - margin_bottom - font_size
         y_l1 = y_l2 - line_spacing
         
-        box_y1 = int(y_l1 - 10)
-        box_y2 = int(p_h - margin_bottom + 10)
+        box_y1 = int(y_l1 - 8)
+        box_y2 = int(p_h - margin_bottom + 8)
         
-        # Vẽ khung đỏ xem trước vị trí chữ mới
         cv2.rectangle(
             preview_img, 
             (int(margin_left), box_y1), 
@@ -80,18 +76,19 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption="📌 Khung đỏ khoanh vùng chính xác 2 dòng cuối sát đáy ảnh.", 
+            caption="📌 Xem trước vị trí thay thế (Sẽ không tạo mảng xám đè lên).", 
             use_container_width=True
         )
 
-def process_vtools_auto_align(img, l1_str, l2_str, f_size, l_spacing, m_left, m_bottom, c_w, opacity):
+def process_vtools_no_box(img, l1_str, l2_str, f_size, l_spacing, m_left, m_bottom, c_w, s_radius):
     """
-    Tính toán vị trí Y dựa trên khoảng cách lề đáy ảnh (margin_bottom),
-    giúp 2 dòng chữ luôn nằm chuẩn ở vị trí cuối cùng.
+    1. Xóa 100% vết chữ cũ và khôi phục cảnh gốc.
+    2. Không dùng bất kỳ mảng xám đè nào.
+    3. Vẽ chữ trắng với lớp bóng đen viền ôm sát (Text Glow/Outline) chuẩn vTools.
     """
     h_img, w_img, _ = img.shape
 
-    # 1. Tọa độ chính xác sát lề dưới
+    # 1. Tọa độ chính xác
     y_l2 = int(h_img - m_bottom - f_size)
     y_l1 = int(y_l2 - l_spacing)
 
@@ -103,7 +100,7 @@ def process_vtools_auto_align(img, l1_str, l2_str, f_size, l_spacing, m_left, m_
     x1, x2 = max(0, x1), min(w_img, x2)
     y1, y2 = max(0, y1), min(h_img, y2)
 
-    # 2. Xóa sạch chữ cũ dưới vùng đệm
+    # 2. Xóa chữ cũ, trả lại nền cảnh thật 100%
     roi = img[y1:y2, x1:x2]
     if roi.size > 0:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -113,20 +110,7 @@ def process_vtools_auto_align(img, l1_str, l2_str, f_size, l_spacing, m_left, m_
         cleaned_roi = cv2.inpaint(roi, dilated_mask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
         img[y1:y2, x1:x2] = cleaned_roi
 
-    # 3. Phủ mảng mờ đục theo độ tùy chỉnh opacity
-    if opacity > 0:
-        overlay = img.copy()
-        cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 0), -1)
-
-        mask = np.zeros((h_img, w_img), dtype=np.float32)
-        mask[y1:y2, x1:x2] = opacity
-        mask = cv2.GaussianBlur(mask, (21, 21), 0)
-        mask_3ch = cv2.merge([mask, mask, mask])
-
-        img_blended = (overlay.astype(np.float32) * mask_3ch + img.astype(np.float32) * (1.0 - mask_3ch))
-        img = np.clip(img_blended, 0, 255).astype(np.uint8)
-
-    # 4. In 2 dòng chữ mới sắc nét lên trên
+    # 3. Chuyển sang PIL để vẽ chữ trắng kèm bóng viền đen ôm sát
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb).convert("RGBA")
 
@@ -134,16 +118,29 @@ def process_vtools_auto_align(img, l1_str, l2_str, f_size, l_spacing, m_left, m_
     if font is None:
         font = ImageFont.load_default()
 
-    # Bóng đen cho chữ
+    # Lớp bóng đen bao quanh chữ (Outer Outline/Shadow)
     shadow_layer = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
     draw_shadow = ImageDraw.Draw(shadow_layer)
 
-    if l1_str:
-        draw_shadow.text((x1 + 1, y_l1 + 1), l1_str, fill=(0, 0, 0, 230), font=font)
-    if l2_str:
-        draw_shadow.text((x1 + 1, y_l2 + 1), l2_str, fill=(0, 0, 0, 230), font=font)
+    # Tạo hiệu ứng bóng tỏa 8 hướng ôm sát nét chữ
+    offsets = [
+        (-1, -1), (0, -1), (1, -1),
+        (-1,  0),          (1,  0),
+        (-1,  1), (0,  1), (1,  1),
+        (0,  2),  (1,  2)
+    ]
 
-    # Chữ trắng nét
+    for dx, dy in offsets:
+        if l1_str:
+            draw_shadow.text((x1 + dx, y_l1 + dy), l1_str, fill=(0, 0, 0, 240), font=font)
+        if l2_str:
+            draw_shadow.text((x1 + dx, y_l2 + dy), l2_str, fill=(0, 0, 0, 240), font=font)
+
+    # Làm mềm bóng viền nhẹ theo thông số slider
+    if s_radius > 0:
+        shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=s_radius * 0.5))
+
+    # Lớp chữ trắng sắc nét ở trên cùng
     text_layer = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
     draw_text = ImageDraw.Draw(text_layer)
 
@@ -152,6 +149,7 @@ def process_vtools_auto_align(img, l1_str, l2_str, f_size, l_spacing, m_left, m_
     if l2_str:
         draw_text.text((x1, y_l2), l2_str, fill=(255, 255, 255, 255), font=font)
 
+    # Ghép các lớp lại
     composed = Image.alpha_composite(pil_img, shadow_layer)
     composed = Image.alpha_composite(composed, text_layer)
 
@@ -168,7 +166,7 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             if img is None:
                 continue
 
-            final_img = process_vtools_auto_align(
+            final_img = process_vtools_no_box(
                 img, 
                 line1, 
                 line2, 
@@ -177,16 +175,16 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
                 margin_left, 
                 margin_bottom,
                 clean_w,
-                shadow_opacity
+                shadow_radius
             )
 
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Chữ nằm đúng vị trí lề dưới và mảng xám mờ đẹp mắt.")
+    st.success("✅ Đã xử lý xong! Nền giữ nguyên cảnh thật 100%, chữ trắng có viền nổi chuẩn vTools.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
-        file_name="vtools_can_chinh_chuan.zip",
+        file_name="vtools_chu_noi_khong_mang_xam.zip",
         mime="application/zip"
     )
