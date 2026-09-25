@@ -68,14 +68,14 @@ st.subheader("2. Điều chỉnh kích thước chữ & Tọa độ")
 col1, col2 = st.columns(2)
 with col1:
     st.markdown("**Kích thước phông chữ thực tế:**")
-    # Giá trị px trực tiếp giúp bạn chủ động tăng/giảm cỡ chữ chính xác
     font_size_px = st.number_input("Chiều cao phông chữ (Pixel) - Mặc định chuẩn vTools:", min_value=10, max_value=120, value=38, step=1)
     stroke_w = st.slider("Độ mảnh viền bóng (px):", min_value=0, max_value=3, value=1, step=1)
 
 with col2:
-    st.markdown("**Vị trí dòng chữ trên ảnh:**")
+    st.markdown("**Vị trí dòng chữ & Độ rộng vùng xóa:**")
     margin_left = st.number_input("Lệch lề trái (Pixel):", value=28)
     margin_bottom = st.number_input("Khoảng cách dòng ngày so với đáy (Pixel):", value=82)
+    clean_width_px = st.number_input("Chiều rộng vùng xóa viền đỏ (Pixel):", min_value=100, max_value=3000, value=750, step=10)
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -88,31 +88,30 @@ if uploaded_files:
         
         y_l1 = p_h - margin_bottom - font_size_px
         
-        # Khung quét xóa nhỏ gọn vừa sát chữ
+        # Khung quét xóa điều chỉnh theo kích thước nhập vào
         box_y1 = int(y_l1 - 4)
         box_y2 = int(y_l1 + font_size_px + 6)
-        clean_w = int(p_w * 0.52)
         
         cv2.rectangle(
             preview_img, 
             (int(margin_left), box_y1), 
-            (int(margin_left + clean_w), box_y2), 
+            (int(margin_left + clean_width_px), box_y2), 
             (0, 0, 255), 2
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"📌 Khung màu đỏ thể hiện vùng xóa chữ cũ (Cỡ chữ hiện tại: {font_size_px}px). Giữ nền 100%.", 
+            caption=f"📌 Khung màu đỏ thể hiện vùng xóa chữ cũ (Độ rộng vùng xóa: {clean_width_px}px). Giữ nền 100%.", 
             use_container_width=True
         )
 
-def process_vtools_exact(img, l1_str, f_size, m_left, m_bottom, s_width):
+def process_vtools_exact(img, l1_str, f_size, m_left, m_bottom, s_width, clean_w):
     h_img, w_img, _ = img.shape
 
     y_l1 = int(h_img - m_bottom - f_size)
 
-    # Vùng quét xóa đúng sát nét chữ
+    # Vùng quét xóa đúng sát nét chữ theo độ rộng tinh chỉnh
     x1 = max(0, int(m_left))
-    x2 = min(w_img, int(m_left + (w_img * 0.52)))
+    x2 = min(w_img, int(m_left + clean_w))
     y1 = max(0, int(y_l1 - 4))
     y2 = min(h_img, int(y_l1 + f_size + 6))
 
@@ -172,16 +171,17 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
                 font_size_px, 
                 margin_left, 
                 margin_bottom, 
-                stroke_w
+                stroke_w,
+                clean_width_px
             )
 
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã hoàn tất! Chữ mới đã phóng to đúng kích thước và trùng khớp phông chữ gốc.")
+    st.success("✅ Đã hoàn tất! Chữ mới đã chuẩn kích thước và điều chỉnh được độ rộng vùng xóa.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
-        file_name="vtools_100pct_match_result.zip",
+        file_name="vtools_exact_custom_width_result.zip",
         mime="application/zip"
     )
