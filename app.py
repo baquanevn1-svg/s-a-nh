@@ -1,4 +1,4 @@
-Cảm ơn bạn đã chụp ảnh chỉ rõ vấn đề! Đúng là khi tăng thông số cũ, vùng quét xóa (vùng xám/màn đen xung quanh) bị mở rộng ra chứ cỡ chữ thực tế vẫn bị nhỏ.   Nguyên nhân chính:Fallback Font trong PIL: Khi hàm load_vtools_font không tải được file font (hoặc đường dẫn URL bị lỗi/chặn), PIL tự động fallback về ImageFont.load_default(). Font mặc định của PIL là font cố định (bitmap font) không thể thay đổi kích thước (font_size), dẫn đến việc dù bạn chỉnh font_size lên bao nhiêu thì chữ vẫn giữ nguyên kích thước nhỏ xíu.   Kích thước dòng chữ gốc vTools: Quan sát trên ảnh gốc, các dòng chữ như Sai số: 3.79 m hay 09:28:23 GMT+07:00 thực tế có chiều cao chữ khá lớn (khoảng 3.2% - 3.5% chiều cao của toàn bức ảnh).   🛠️ Cách khắc phục triệt để trong Code:Tải Font trực tiếp & Đảm bảo TrueType font luôn hoạt động: Code tự động tải font chuẩn Roboto-Regular.ttf hoặc tạo font TrueType vẽ chuẩn kích thước.Tự động đo kích thước dòng giờ gốc: Căn đúng cỡ chữ của dòng giờ 09:28:23 GMT+07:00 ở dưới để dòng ngày tháng mới có kích thước bằng 100% dòng giờ gốc.   Thu gọn vùng quét xóa: Bóp chặt vùng xóa để chỉ xóa đúng viền sát nét chữ cũ, tuyệt đối không làm loang hay mở rộng màn mờ ra xung quanh.   Code app.py đã sửa lỗi phông chữ & thu gọn vùng xóa:Bạn hãy copy toàn bộ mã dưới đây thay thế vào file app.py:Pythonimport streamlit as st
+import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -34,7 +34,6 @@ def get_scalable_font(font_size):
         except Exception:
             pass
             
-    # Dự phòng nếu không có mạng: Dùng font sans-serif hệ thống có thể scale size
     try:
         return ImageFont.truetype("arial.ttf", int(font_size))
     except Exception:
@@ -70,14 +69,12 @@ if uploaded_files:
     if preview_img is not None:
         p_h, p_w, _ = preview_img.shape
         
-        # Tính kích thước thực tế
         calc_f_size = int(p_h * (font_size_pct / 100.0))
         calc_m_left = int(p_w * (margin_left_pct / 100.0))
         calc_m_bottom = int(p_h * (margin_bottom_pct / 100.0))
         
         y_l1 = p_h - calc_m_bottom - calc_f_size
         
-        # Vùng quét xóa được bóp gọn tối đa sát dòng chữ cũ
         y1 = int(y_l1 - (calc_f_size * (clean_height_mult - 1.0) / 2))
         y2 = int(y_l1 + calc_f_size + (calc_f_size * (clean_height_mult - 1.0) / 2))
         clean_w = int(p_w * 0.52)
@@ -90,14 +87,13 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"📌 Khung đỏ: Vùng quét xóa được thu gọn ôm sát nét chữ cũ (Cỡ chữ tính toán: {calc_f_size}px).", 
+            caption=f"📌 Khung đỏ: Vùng quét xóa ôm sát nét chữ cũ (Cỡ chữ tính toán: {calc_f_size}px).", 
             use_container_width=True
         )
 
 def process_vtools_exact_size(img, l1_str, f_pct, m_left_p, m_bottom_p, s_w, c_h_mult):
     h_img, w_img, _ = img.shape
 
-    # 1. TÍNH TOÁN CỠ CHỮ THỰC TẾ THEO ẢNH GỐC
     f_size = max(16, int(h_img * (f_pct / 100.0)))
     m_left = int(w_img * (m_left_p / 100.0))
     m_bottom = int(h_img * (m_bottom_p / 100.0))
@@ -105,7 +101,6 @@ def process_vtools_exact_size(img, l1_str, f_pct, m_left_p, m_bottom_p, s_w, c_h
 
     y_l1 = int(h_img - m_bottom - f_size)
 
-    # Vùng quét xóa được thu hẹp tối đa sát vào chữ
     x1 = int(m_left)
     x2 = int(m_left + c_w)
     padding = int(f_size * (c_h_mult - 1.0) / 2)
@@ -115,21 +110,16 @@ def process_vtools_exact_size(img, l1_str, f_pct, m_left_p, m_bottom_p, s_w, c_h
     x1, x2 = max(0, x1), min(w_img, x2)
     y1, y2 = max(0, y1), min(h_img, y2)
 
-    # 2. XÓA NÉT CHỮ CỦ BẰNG THUẬT TOÁN INPAINT TẬP TRUNG (KHÔNG LÀM LOANG NỀN)
     roi = img[y1:y2, x1:x2]
     if roi.size > 0:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         
-        # Chỉ lấy đúng các pixel chữ màu trắng sáng
         _, mask = cv2.threshold(gray, 175, 255, cv2.THRESH_BINARY)
         
-        # Mở rộng nhẹ 1px để bao trọn nét
         dilated_mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
 
-        # Inpaint tẩy chữ giữ nguyên nền ảnh
         img[y1:y2, x1:x2] = cv2.inpaint(roi, dilated_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
 
-    # 3. VE CHỮ MỚI TO BẰNG ĐÚNG CHỮ GỐC
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     base_pil = Image.fromarray(img_rgb).convert("RGBA")
 
@@ -141,7 +131,6 @@ def process_vtools_exact_size(img, l1_str, f_pct, m_left_p, m_bottom_p, s_w, c_h
     if l1_str:
         text_pos = (x1, y_l1)
         
-        # Vẽ nét chữ trắng với viền bóng đen mỏng nét chuẩn vTools
         draw.text(
             text_pos, 
             l1_str, 
@@ -178,7 +167,7 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Chữ mới to bằng chữ gốc, vùng nền giữ nguyên 100% không bị đen/mờ.")
+    st.success("✅ Đã xử lý xong! Chữ mới to bằng chữ gốc, vùng nền giữ nguyên 100%.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
