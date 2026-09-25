@@ -1,14 +1,14 @@
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import io
 import zipfile
 import os
 import urllib.request
 
-st.set_page_config(page_title="vTools Direct Replacement", layout="wide")
-st.title("📷 vTools Pro: Thay Thế Trực Tiếp Tại Vị Trí Cũ (Góc Trái)")
+st.set_page_config(page_title="vTools Clean & Replace", layout="wide")
+st.title("📷 vTools Pro: Xóa Sạch Chữ Cũ Rồi Mới Thay Chữ Mới")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -39,19 +39,19 @@ st.subheader("1. Nội dung 2 dòng cuối cần thay thế")
 line1 = st.text_input("Dòng áp chót (Thứ, ngày tháng năm):", "Thứ Bảy, 15 tháng 2 2025")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:28:23 GMT+07:00")
 
-st.subheader("2. Căn chỉnh vị trí góc dưới bên trái")
+st.subheader("2. Tùy chỉnh vị trí và độ mờ nền")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("**Vị trí đè chữ (Tính từ góc dưới lề trái):**")
-    margin_left = st.number_input("Căn lề trái (px):", value=25)
-    margin_bottom = st.number_input("Căn lề đáy (px):", value=45)
-    overlay_opacity = st.slider("Độ mờ màn đen đè chữ cũ:", min_value=0.05, max_value=0.40, value=0.18, step=0.01)
+    st.markdown("**Vị trí 2 dòng cuối (Góc lề trái dưới):**")
+    margin_left = st.number_input("Cách lề trái (px):", value=25)
+    margin_bottom = st.number_input("Cách lề đáy (px):", value=45)
+    shadow_opacity = st.slider("Độ đậm bóng đen sau chữ mới:", min_value=0.0, max_value=0.30, value=0.12, step=0.01)
 
 with col2:
-    st.markdown("**Cấu hình phông chữ:**")
+    st.markdown("**Cấu hình chữ vTools:**")
     font_size = st.number_input("Kích thước phông chữ (px):", value=28)
     line_spacing = st.number_input("Khoảng cách giữa 2 dòng (px):", value=34)
-    box_width = st.number_input("Chiều rộng mảng che (px):", value=460)
+    clean_w = st.number_input("Chiều rộng vùng xóa chữ cũ (px):", value=460)
 
 if uploaded_files:
     first_file = uploaded_files[0]
@@ -63,51 +63,63 @@ if uploaded_files:
         p_h, p_w, _ = preview_img.shape
         y_l2 = p_h - margin_bottom - font_size
         y_l1 = y_l2 - line_spacing
-        box_y1 = int(y_l1 - 8)
-        box_y2 = int(p_h - margin_bottom + 8)
+        box_y1 = int(y_l1 - 10)
+        box_y2 = int(p_h - margin_bottom + 10)
         
-        # Khung đỏ xem trước vị trí thay thế trực tiếp
         cv2.rectangle(
             preview_img, 
             (int(margin_left), box_y1), 
-            (int(margin_left + box_width), box_y2), 
+            (int(margin_left + clean_w), box_y2), 
             (0, 0, 255), 2
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption="📌 Chữ mới sẽ được đè thẳng vào đúng vị trí khung đỏ ở góc trái.", 
+            caption="📌 Khung đỏ là vùng sẽ được XÓA SẠCH chữ cũ trước khi chèn chữ mới.", 
             use_container_width=True
         )
 
-def replace_text_directly_at_left(img, l1_str, l2_str, f_size, l_spacing, m_left, m_bottom, b_width, opacity):
+def clean_old_text_and_draw_new(img, l1_str, l2_str, f_size, l_spacing, m_left, m_bottom, c_w, opacity):
     h_img, w_img, _ = img.shape
 
-    # 1. Tọa độ chính xác ở góc dưới lề trái
+    # Tọa độ vùng 2 dòng chữ cuối
     y_l2 = int(h_img - m_bottom - f_size)
     y_l1 = int(y_l2 - l_spacing)
 
     x1 = int(m_left)
-    x2 = int(m_left + b_width)
-    y1 = int(y_l1 - 10)
-    y2 = int(h_img - m_bottom + 10)
+    x2 = int(m_left + c_w)
+    y1 = int(y_l1 - 12)
+    y2 = int(h_img - m_bottom + 12)
 
     x1, x2 = max(0, x1), min(w_img, x2)
     y1, y2 = max(0, y1), min(h_img, y2)
 
-    # 2. Phủ màn đen mờ che thẳng chữ cũ (Không cần xóa/Inpaint phức tạp)
+    # BƯỚC 1: XÓA TẨY SẠCH NÉT CHỮ CŨ (Tự động nhận diện nét chữ trắng)
+    roi = img[y1:y2, x1:x2]
+    if roi.size > 0:
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        # Quét lấy nét chữ màu trắng
+        _, mask_text = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        dilated_mask = cv2.dilate(mask_text, kernel, iterations=1)
+        
+        # Dùng thuật toán Inpaint để tẩy sạch nét chữ trắng, trả lại cảnh gốc phía sau
+        cleaned_roi = cv2.inpaint(roi, dilated_mask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
+        img[y1:y2, x1:x2] = cleaned_roi
+
+    # BƯỚC 2: TẠO BÓNG ĐEN MỜ NHẸ CHO CHỮ MỚI (NẾU CẦN)
     if opacity > 0:
         overlay = img.copy()
         cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 0), -1)
 
         mask = np.zeros((h_img, w_img), dtype=np.float32)
         mask[y1:y2, x1:x2] = opacity
-        mask = cv2.GaussianBlur(mask, (21, 21), 0) # Mờ mềm mép màn đen
+        mask = cv2.GaussianBlur(mask, (21, 21), 0)
         mask_3ch = cv2.merge([mask, mask, mask])
 
         img_blended = (overlay.astype(np.float32) * mask_3ch + img.astype(np.float32) * (1.0 - mask_3ch))
         img = np.clip(img_blended, 0, 255).astype(np.uint8)
 
-    # 3. Vẽ chữ trắng mới lên trên
+    # BƯỚC 3: IN CHỮ MỚI LÊN VÙNG ĐÃ XÓA SẠCH
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb).convert("RGBA")
 
@@ -127,7 +139,7 @@ def replace_text_directly_at_left(img, l1_str, l2_str, f_size, l_spacing, m_left
     res_rgb = composed.convert("RGB")
     return cv2.cvtColor(np.array(res_rgb), cv2.COLOR_RGB2BGR)
 
-if uploaded_files and st.button("🚀 Bắt Đầu Thay Thế Trực Tiếp Hàng Loạt"):
+if uploaded_files and st.button("🚀 Xóa Chữ Cũ & In Chữ Mới"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -137,7 +149,7 @@ if uploaded_files and st.button("🚀 Bắt Đầu Thay Thế Trực Tiếp Hàn
             if img is None:
                 continue
 
-            final_img = replace_text_directly_at_left(
+            final_img = clean_old_text_and_draw_new(
                 img, 
                 line1, 
                 line2, 
@@ -145,17 +157,17 @@ if uploaded_files and st.button("🚀 Bắt Đầu Thay Thế Trực Tiếp Hàn
                 line_spacing, 
                 margin_left, 
                 margin_bottom,
-                box_width,
-                overlay_opacity
+                clean_w,
+                shadow_opacity
             )
 
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Chữ mới đè chính xác vị trí góc trái, sạch sẽ và không lỗi nền.")
+    st.success("✅ Đã xử lý xong! Chữ cũ đã bị xóa hoàn toàn trước khi viết chữ mới.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
-        file_name="vtools_thay_truc_tiep_goc_trai.zip",
+        file_name="vtools_xoa_sach_chu_cu.zip",
         mime="application/zip"
     )
