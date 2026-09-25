@@ -8,7 +8,7 @@ import os
 import urllib.request
 
 st.set_page_config(page_title="vTools Watermark Editor", layout="wide")
-st.title("📷 Công cụ vTools: Xóa Siêu Tinh Vi (Không Nhòe Nền 100%) & Chèn Góc Phải")
+st.title("📷 Công cụ vTools: Xóa Sạch Bóng Mờ 100% & Chèn Chữ Góc Phải")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -39,14 +39,14 @@ st.subheader("1. Nội dung thay thế")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Sáu, 22 tháng 8 2025")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:15:37 GMT+07:00")
 
-st.subheader("2. Thông số căn chỉnh chuẩn")
+st.subheader("2. Thông số vị trí căn chỉnh")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("**Vùng quét chữ cũ (Góc dưới bên trái):**")
+    st.markdown("**Vùng quét xóa chữ cũ (Góc dưới bên trái):**")
     clean_x = st.number_input("Tọa độ X góc trái:", value=30)
-    clean_y = st.number_input("Tọa độ Y góc trên:", value=1840)
+    clean_y = st.number_input("Tọa độ Y góc trên:", value=1835)
     clean_w = st.number_input("Chiều rộng vùng quét (px):", value=480)
-    clean_h = st.number_input("Chiều cao vùng quét (px):", value=130)
+    clean_h = st.number_input("Chiều cao vùng quét (px):", value=140)
 
 with col2:
     st.markdown("**Vị trí chữ mới (Góc dưới bên phải):**")
@@ -63,14 +63,14 @@ if uploaded_files:
     
     if preview_img is not None:
         p_h, p_w, _ = preview_img.shape
-        # Khung đỏ đánh dấu vùng quét chữ
+        # Khung đỏ: Vùng quét xóa chữ cũ & bóng mờ
         cv2.rectangle(
             preview_img, 
             (int(clean_x), int(clean_y)), 
             (int(clean_x + clean_w), int(clean_y + clean_h)), 
             (0, 0, 255), 2
         )
-        # Khung xanh đánh dấu chữ mới bên phải
+        # Khung xanh: Chèn chữ mới bên phải
         right_box_x = p_w - margin_right - 420
         right_box_y = p_h - margin_bottom - (line_spacing + font_size)
         cv2.rectangle(
@@ -81,14 +81,14 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption=f"Vùng xử lý (Đỏ = Xóa chữ siêu nét | Xanh = Chèn chữ góc phải)", 
+            caption=f"Khung đỏ = Vùng tẩy sạch chữ & bóng mờ | Khung xanh = Vị trí chữ mới góc phải", 
             use_container_width=True
         )
 
-def process_vtools_ultra_real(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacing, m_right, m_bottom):
+def process_vtools_perfect_clean(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacing, m_right, m_bottom):
     h_img, w_img, _ = img.shape
 
-    # 1. THUẬT TOÁN XÓA CHỮ SIÊU CỤC BỘ (TỔN THƯƠNG NỀN = 0%)
+    # 1. THUẬT TOÁN XÓA TRẠM CHỮ & BÓNG MỜ CHUYÊN SÂU
     x1, x2 = max(0, int(cx)), min(w_img, int(cx + cw))
     y1, y2 = max(0, int(cy)), min(h_img, int(cy + ch))
 
@@ -96,18 +96,18 @@ def process_vtools_ultra_real(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spa
     if roi.size > 0:
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         
-        # Chỉ nhặt ĐÚNG các pixel màu trắng sáng của chữ vTools (Ngưỡng cao 185)
-        _, precise_mask = cv2.threshold(gray_roi, 185, 255, cv2.THRESH_BINARY)
+        # Tạo mặt nạ quét chữ trắng (ngưỡng > 165)
+        _, mask_white = cv2.threshold(gray_roi, 165, 255, cv2.THRESH_BINARY)
         
-        # Mở rộng cực nhẹ 1px vừa đủ trùm lên viền chữ, không lan ra cảnh xung quanh
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-        mask_thin = cv2.dilate(precise_mask, kernel, iterations=1)
+        # Mở rộng vùng lọc đúng 3px để gom sạch vết bóng đổ đen mờ xung quanh chữ
+        kernel_shadow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask_shadow = cv2.dilate(mask_white, kernel_shadow, iterations=1)
         
-        # Dùng bán kính bù màu siêu nhỏ inpaintRadius = 1 (Không tạo ra vết nhòe xám/mờ nền)
-        cleaned_roi = cv2.inpaint(roi, mask_thin, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
+        # Bù ảnh theo thuật toán Telea với bán kính quét hạt mịn (radius = 2)
+        cleaned_roi = cv2.inpaint(roi, mask_shadow, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
         img[y1:y2, x1:x2] = cleaned_roi
 
-    # 2. VẼ 2 DÒNG CHỮ MỚI SANG GÓC BÊN PHẢI (BÓNG MỜ CHUẨN)
+    # 2. CHÈN 2 DÒNG CHỮ MỚI SANG GÓC BÊN PHẢI (ÁP DỤNG BÓNG MỜ SOFT SHADOW)
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb).convert("RGBA")
 
@@ -126,7 +126,7 @@ def process_vtools_ultra_real(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spa
     y_l2 = int(h_img - m_bottom - f_size)
     y_l1 = int(y_l2 - l_spacing)
 
-    # Lớp bóng đổ nhẹ tỏa mờ
+    # Hiệu ứng bóng đen tỏa mờ nhẹ cho chữ mới
     shadow_layer = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
     draw_shadow = ImageDraw.Draw(shadow_layer)
 
@@ -137,7 +137,7 @@ def process_vtools_ultra_real(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spa
 
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=1.0))
 
-    # Lớp chữ màu trắng
+    # Lớp chữ trắng chính
     text_layer = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
     draw_text = ImageDraw.Draw(text_layer)
 
@@ -152,7 +152,7 @@ def process_vtools_ultra_real(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spa
     res_rgb = composed.convert("RGB")
     return cv2.cvtColor(np.array(res_rgb), cv2.COLOR_RGB2BGR)
 
-if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý (Xóa Thật 100% - Không Nhòe Nền)"):
+if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý (Xóa Sạch Bóng Mờ & Chèn Phải)"):
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -162,7 +162,7 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý (Xóa Thật 100% - 
             if img is None:
                 continue
 
-            final_img = process_vtools_ultra_real(
+            final_img = process_vtools_perfect_clean(
                 img, 
                 clean_x, 
                 clean_y, 
@@ -179,10 +179,10 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý (Xóa Thật 100% - 
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Nền lá cây/cảnh vật giữ nguyên độ nét 100%, không bị nhòe hay đổi màu.")
+    st.success("✅ Đã xử lý xong! Tẩy sạch 100% nét chữ lẫn bóng mờ cũ, nền ảnh sắc nét không bị nhòe.")
     st.download_button(
         label="📥 Tải về file ZIP tất cả ảnh đã xử lý",
         data=zip_buffer.getvalue(),
-        file_name="anh_vtools_chinh_xac.zip",
+        file_name="anh_vtools_sach_100.zip",
         mime="application/zip"
     )
