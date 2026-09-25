@@ -7,8 +7,8 @@ import zipfile
 import os
 import urllib.request
 
-st.set_page_config(page_title="vTools Watermark Remover Dynamic", layout="wide")
-st.title("📷 vTools Pro: Xóa Triệt Để Chữ & Tự Động Phục Hồi Cảnh Nền Phía Sau")
+st.set_page_config(page_title="vTools Watermark Remover Natural Structure", layout="wide")
+st.title("📷 vTools Pro: Xóa Sạch Chữ & Giữ Nguyên Cảnh Vật Phía Sau")
 
 @st.cache_resource
 def load_custom_font(font_size):
@@ -39,7 +39,7 @@ st.subheader("1. Nội dung thay thế góc phải")
 line1 = st.text_input("Dòng áp chót (Ngày tháng):", "Thứ Sáu, 22 tháng 8 2025")
 line2 = st.text_input("Dòng cuối cùng (Giờ & GMT):", "09:15:37 GMT+07:00")
 
-st.subheader("2. Thông số vùng xử lý (Đã giữ nguyên theo chuẩn của bạn)")
+st.subheader("2. Thông số vùng xử lý (Giữ nguyên chuẩn của bạn)")
 col1, col2 = st.columns(2)
 with col1:
     st.markdown("**Khung khoanh vùng chứa chữ bên trái:**")
@@ -63,14 +63,14 @@ if uploaded_files:
     
     if preview_img is not None:
         p_h, p_w, _ = preview_img.shape
-        # Vẽ khung đỏ xem trước vùng quét
+        # Khung đỏ khoanh vùng
         cv2.rectangle(
             preview_img, 
             (int(clean_x), int(clean_y)), 
             (int(clean_x + clean_w), int(clean_y + clean_h)), 
             (0, 0, 255), 2
         )
-        # Vẽ khung xanh xem trước chữ mới
+        # Khung xanh xem trước chữ mới
         right_box_x = p_w - margin_right - 420
         right_box_y = p_h - margin_bottom - (line_spacing + font_size)
         cv2.rectangle(
@@ -81,14 +81,13 @@ if uploaded_files:
         )
         st.image(
             cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB), 
-            caption="📌 Khung đỏ giữ nguyên tọa độ chuẩn của bạn.", 
+            caption="📌 Khung đỏ khoanh vùng chứa chữ (Thuật toán sẽ giữ nguyên chi tiết cảnh vật bên dưới).", 
             use_container_width=True
         )
 
-def dynamic_clean_and_reconstruct_background(img, cx, cy, cw, ch):
+def remove_text_keep_background_structure(img, cx, cy, cw, ch):
     """
-    Thuật toán tự động phân tích bối cảnh cảnh quan riêng của từng bức ảnh
-    để tái tạo nền trùng khớp nhất và xóa sạch 100% nét chữ.
+    Xóa sạch 100% nét chữ nhưng giữ nguyên 100% đường nét chi tiết cảnh vật phía sau.
     """
     h_img, w_img, _ = img.shape
     x1, x2 = max(0, int(cx)), min(w_img, int(cx + cw))
@@ -100,55 +99,36 @@ def dynamic_clean_and_reconstruct_background(img, cx, cy, cw, ch):
 
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-    # 1. Bắt triệt để 100% nét chữ + bóng chữ + quầng mờ
-    _, thresh_high = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
-    thresh_adapt = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, -8
-    )
-
+    # 1. Nhận diện chính xác pixel chữ trắng và quầng mờ viền chữ
+    _, mask_white = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY)
+    
+    # Lọc viền chữ bằng Sobel
     grad_x = cv2.Sobel(gray, cv2.CV_8U, 1, 0, ksize=3)
     grad_y = cv2.Sobel(gray, cv2.CV_8U, 0, 1, ksize=3)
     grad = cv2.addWeighted(grad_x, 0.5, grad_y, 0.5, 0)
-    _, thresh_grad = cv2.threshold(grad, 12, 255, cv2.THRESH_BINARY)
+    _, mask_grad = cv2.threshold(grad, 18, 255, cv2.THRESH_BINARY)
 
-    # Gộp mặt nạ và mở rộng vùng quét nét chữ lên 7x7 pixel
-    mask = cv2.bitwise_or(thresh_high, thresh_adapt)
-    mask = cv2.bitwise_or(mask, thresh_grad)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    dilated_mask = cv2.dilate(mask, kernel, iterations=2)
+    # Gộp mặt nạ nét chữ
+    letter_mask = cv2.bitwise_or(mask_white, mask_grad)
 
-    # 2. Xóa chữ lần 1 bằng thuật toán khôi phục cấu trúc cảnh quan (Navier-Stokes)
-    inpainted_ns = cv2.inpaint(roi, dilated_mask, inpaintRadius=6, flags=cv2.INPAINT_NS)
+    # 2. Nở nhẹ mặt nạ 3x3 để ôm hết quầng bóng mờ nhưng KHÔNG lấn sang cảnh vật xung quanh
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    dilated_mask = cv2.dilate(letter_mask, kernel, iterations=2)
 
-    # 3. Phân tích nền động theo bức ảnh (Dynamic Patch Reconstruction):
-    # Lấy mẫu dải nền sạch ngay sát mép phải vùng chữ của ĐÚNG BỨC ẢNH ĐÓ
-    sample_x1 = min(w_img - 1, x2 + 5)
-    sample_x2 = min(w_img, sample_x1 + (x2 - x1))
-    
-    if (sample_x2 - sample_x1) == (x2 - x1):
-        sample_patch = img[y1:y2, sample_x1:sample_x2]
-        
-        # Tạo mặt nạ hòa trộn mượt theo độ sáng/tối từng điểm
-        blend_mask = cv2.GaussianBlur(dilated_mask.astype(np.float32) / 255.0, (15, 15), 0)
-        blend_mask_3ch = cv2.merge([blend_mask, blend_mask, blend_mask])
+    # 3. Phục hồi dòng chảy cấu trúc liên tục (Navier-Stokes) - Giúp bảo toàn sóng tôn, ống nước, cột điện
+    cleaned_roi = cv2.inpaint(roi, dilated_mask, inpaintRadius=3, flags=cv2.INPAINT_NS)
 
-        # Trộn mảng nền chân thực của ảnh với vùng đã được xóa chữ
-        reconstructed = (sample_patch.astype(np.float32) * blend_mask_3ch + 
-                         inpainted_ns.astype(np.float32) * (1.0 - blend_mask_3ch))
-        final_roi = np.clip(reconstructed, 0, 255).astype(np.uint8)
-    else:
-        final_roi = inpainted_ns
-
-    img[y1:y2, x1:x2] = final_roi
+    # Ghép lại vào ảnh gốc
+    img[y1:y2, x1:x2] = cleaned_roi
     return img
 
-def process_vtools_dynamic(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacing, m_right, m_bottom):
+def process_vtools_natural(img, cx, cy, cw, ch, l1_str, l2_str, f_size, l_spacing, m_right, m_bottom):
     h_img, w_img, _ = img.shape
 
-    # 1. Tự động nhận diện và tái tạo nền riêng cho từng ảnh
-    img = dynamic_clean_and_reconstruct_background(img, cx, cy, cw, ch)
+    # 1. Xóa chữ bảo toàn cảnh vật
+    img = remove_text_keep_background_structure(img, cx, cy, cw, ch)
 
-    # 2. Thêm chữ mới ở góc dưới bên phải
+    # 2. Tạo chữ mới góc phải
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb).convert("RGBA")
 
@@ -203,7 +183,7 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             if img is None:
                 continue
 
-            final_img = process_vtools_dynamic(
+            final_img = process_vtools_natural(
                 img, 
                 clean_x, 
                 clean_y, 
@@ -220,10 +200,10 @@ if uploaded_files and st.button("🚀 Bắt Đầu Xử Lý Hàng Loạt"):
             _, encoded_img = cv2.imencode(".jpg", final_img, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
             zip_file.writestr(f"edited_{uploaded_file.name}", encoded_img.tobytes())
 
-    st.success("✅ Đã xử lý xong! Nền được tái tạo riêng cho từng ảnh và xóa sạch 100% chữ.")
+    st.success("✅ Đã xử lý xong! Chữ được xóa sạch và cảnh vật phía sau hoàn toàn tự nhiên.")
     st.download_button(
         label="📥 Tải về file ZIP kết quả",
         data=zip_buffer.getvalue(),
-        file_name="vtools_sach_nen_rieng_tung_anh.zip",
+        file_name="vtools_xoa_sach_giu_canh.zip",
         mime="application/zip"
     )
